@@ -1,4 +1,24 @@
 <launch>
+  <!-- Ports by STABLE udev symlink, never by enumeration order.
+       /dev/ttyUSB<N> is assigned in the order adapters appear, so any replug
+       or USB glitch renumbers every arm at once.  That happened (2026-08-26):
+       an adapter re-enumerated after roslaunch, ttyUSB0 vanished, everything
+       shifted up one, and the right arm's node was left holding a dead handle
+       It published -3.1416 rad on all seven joints with 34e6 rad/s
+       velocities until replay's safety check refused to move it.
+       The dangerous shuffle is the silent one: under the numbering at that
+       moment ttyUSB1 was the LEFT arm, and this file was telling the RIGHT
+       arm's node to open it.  Nothing downstream can detect commands landing
+       on the wrong servos.
+       99-interbotix-udev.rules already binds each adapter's FTDI serial
+       (FT8J0W5T / FT5NV8RB / FT89FDIZ) to a fixed name, so use those. -->
+
+  <!-- Arm selection: single / bimanual / all.
+         roslaunch av_aloha 3arms_teleop.launch use_middle:=false          # bimanual
+         roslaunch av_aloha 3arms_teleop.launch use_right:=false use_middle:=false  # left only -->
+  <arg name="use_left"   default="true"/>
+  <arg name="use_right"  default="true"/>
+  <arg name="use_middle" default="true"/>
 
   <arg name="robot_model_puppet_left"           default="vx300s"/>
   <arg name="robot_model_puppet_right"          default="vx300s"/>
@@ -19,7 +39,7 @@
   <arg name="robot_name_puppet_middle"          value="puppet_middle"/>
 
   <!-- Launch real robot -->
-  <include if="$(arg launch_driver)" file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
+  <include if="$(eval arg('launch_driver') and arg('use_left'))" file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
     <arg name="robot_model"                       value="$(arg robot_model_puppet_left)"/>
     <arg name="robot_name"                        value="$(arg robot_name_puppet_left)"/>
     <arg name="base_link_frame"                   value="$(arg base_link_puppet)"/>
@@ -27,10 +47,10 @@
     <arg name="use_rviz"                          value="false"/>
     <arg name="mode_configs"                      value="$(arg puppet_modes_left)"/>
     <arg name="use_sim"                           value="false"/>
-    <arg name="port" value="/dev/ttyUSB0"/>
+    <arg name="port" value="/dev/ttyDXL_puppet_left"/>
   </include>
 
-  <include if="$(arg launch_driver)" file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
+  <include if="$(eval arg('launch_driver') and arg('use_right'))" file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
     <arg name="robot_model"                       value="$(arg robot_model_puppet_right)"/>
     <arg name="robot_name"                        value="$(arg robot_name_puppet_right)"/>
     <arg name="base_link_frame"                   value="$(arg base_link_puppet)"/>
@@ -38,10 +58,10 @@
     <arg name="use_rviz"                          value="false"/>
     <arg name="mode_configs"                      value="$(arg puppet_modes_right)"/>
     <arg name="use_sim"                           value="false"/>
-    <arg name="port" value="/dev/ttyUSB1"/>
+    <arg name="port" value="/dev/ttyDXL_puppet_right"/>
   </include>
 
-  <include if="$(arg launch_driver)" file="$(find wx250s_7dof_description)/launch/xsarm_control.launch">
+  <include if="$(eval arg('launch_driver') and arg('use_middle'))" file="$(find wx250s_7dof_description)/launch/xsarm_control.launch">
     <arg name="robot_model"                       value="$(arg robot_model_puppet_middle)"/>
     <arg name="robot_name"                        value="$(arg robot_name_puppet_middle)"/>
     <arg name="base_link_frame"                   value="$(arg base_link_puppet)"/>
@@ -49,7 +69,7 @@
     <arg name="use_rviz"                          value="false"/>
     <arg name="mode_configs"                      value="$(arg puppet_modes_middle)"/>
     <arg name="use_sim"                           value="false"/>
-    <arg name="port" value="/dev/ttyUSB2"/>
+    <arg name="port" value="/dev/ttyDXL_puppet_middle"/>
     <arg name="load_configs" value="false"/>
   </include>
 
@@ -63,10 +83,10 @@
     <arg name="use_rviz"                          value="$(arg use_rviz)"/>
     <arg name="mode_configs"                      value="$(arg puppet_modes_left)"/>
     <arg name="use_sim"                           value="$(arg use_sim)"/>
-    <arg name="port" value="/dev/ttyUSB0"/>
+    <arg name="port" value="/dev/ttyDXL_puppet_left"/>
   </include>
 
-  <include if="$(arg launch_driver)" file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
+  <include if="$(eval arg('launch_driver') and arg('use_right'))" file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
     <arg name="robot_model"                       value="$(arg robot_model_puppet_right)"/>
     <arg name="robot_name"                        value="$(arg robot_name_puppet_right)"/>
     <arg name="base_link_frame"                   value="$(arg base_link_puppet)"/>
@@ -74,10 +94,10 @@
     <arg name="use_rviz"                          value="$(arg use_rviz)"/>
     <arg name="mode_configs"                      value="$(arg puppet_modes_right)"/>
     <arg name="use_sim"                           value="$(arg use_sim)"/>
-    <arg name="port" value="/dev/ttyUSB1"/>
+    <arg name="port" value="/dev/ttyDXL_puppet_right"/>
   </include>
 
-  <include if="$(arg launch_driver)" file="$(find wx250s_7dof_description)/launch/xsarm_control.launch">
+  <include if="$(eval arg('launch_driver') and arg('use_middle'))" file="$(find wx250s_7dof_description)/launch/xsarm_control.launch">
     <arg name="robot_model"                       value="$(arg robot_model_puppet_middle)"/>
     <arg name="robot_name"                        value="$(arg robot_name_puppet_middle)"/>
     <arg name="base_link_frame"                   value="$(arg base_link_puppet)"/>
@@ -85,22 +105,22 @@
     <arg name="use_rviz"                          value="$(arg use_rviz)"/>
     <arg name="mode_configs"                      value="$(arg puppet_modes_middle)"/>
     <arg name="use_sim"                           value="$(arg use_sim)"/>
-    <arg name="port" value="/dev/ttyUSB2"/>
+    <arg name="port" value="/dev/ttyDXL_puppet_middle"/>
   </include> -->
 
-  <node
+  <node if="$(arg use_left)"
     name="puppet_left_transform_broadcaster"
     pkg="tf2_ros"
     type="static_transform_publisher"
     args="0.545 0.469 0 -1.57 0 0 /world /$(arg robot_name_puppet_left)/base_link"/>
 
-  <node
+  <node if="$(arg use_right)"
     name="puppet_right_transform_broadcaster"
     pkg="tf2_ros"
     type="static_transform_publisher"
     args="0.545 -0.469 0 1.57 0 0 /world /$(arg robot_name_puppet_right)/base_link"/>
 
-  <node
+  <node if="$(arg use_middle)"
     name="puppet_middle_transform_broadcaster"
     pkg="tf2_ros"
     type="static_transform_publisher"

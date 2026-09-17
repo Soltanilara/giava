@@ -17,7 +17,7 @@ weight 100).  Three facts keep that from being a guarantee:
 This gate closes all three holes.  It checks the FINAL command -- after
 every clamp, immediately before `set_joint_positions` -- against a capsule
 model that is CIRCUMSCRIBED: every capsule contains its link's full
-collision mesh by construction (`ik_study/collision_models.fit_tight_capsule`,
+collision mesh by construction (`ik/collision_models.fit_tight_capsule`,
 long-OBB-axis fit with exact vertex containment).  Circumscription is the
 whole argument:
 
@@ -79,7 +79,7 @@ import jax
 import numpy as np
 
 _HERE = Path(__file__).resolve().parent
-for _p in (str(_HERE), str(_HERE / "ik_study")):
+for _p in (str(_HERE), str(_HERE.parent / "ik")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -105,8 +105,141 @@ GATE_MARGIN_FINGER = float(os.environ.get(
     "GIAVA_CAPSULE_GATE_MARGIN_FINGER", "0.008"))
 
 
+## THE CAMERA IS THE FRAGILE PART, so it gets its own, LARGER margin.
+##
+## Every other pair on this robot is aluminium against aluminium: a bump is
+## embarrassing, not expensive.  The camera housing carries the stereo pair
+## the whole teleop loop depends on, and a knock does not just break it -- it
+## silently moves the lenses, which invalidates the extrinsics while leaving
+## a picture that still looks fine.  The cost of stopping too early there is
+## a few centimetres of reach; the cost of stopping too late is a recapture,
+## a recalibration, and every recording made in between being subtly wrong.
+##
+## Asymmetric on purpose: a bigger margin only ever makes the gate stop
+## SOONER, so raising it cannot create a new failure mode -- it can only
+## reduce reachable workspace near the camera.
+CAMERA_LINKS: Tuple[str, ...] = (
+    "middle_camera", "middle_camera_body", "middle_camera_cover",
+    "middle_pan_link", "middle_wrist_link",
+    ## Left/right wrist D405s (2026-09-02): these used to be geometry fused
+    ## into "*_gripper_base" -- a plain gripper link, gripper margin, no
+    ## special treatment for the one part on each hand that is genuinely
+    ## expensive to knock. Splitting the mesh into its own link
+    ## (giava.urdf, "*_gripper_camera") is what makes this classification
+    ## reachable at all.
+    "right_gripper_camera", "left_gripper_camera",
+)
+## 50 -> 40 mm on 2026-08-28, 40 -> 32 mm on 2026-09-01: hardware said the
+## camera class was stopping the arms further out than the operator wanted,
+## both times.  Still the LARGEST margin
+## on the robot, and still asymmetric for the reason above -- 32 mm keeps
+## more headroom around the camera than any structural pair gets, it just
+## costs a centimetre less reach than 50 did.
+GATE_MARGIN_CAMERA = float(os.environ.get(
+    "GIAVA_CAPSULE_GATE_MARGIN_CAMERA", "0.032"))
+
+
+## THE GRIPPERS ARE FRAGILE TOO, but they are also the one place on the robot
+## where two links are MEANT to come together.  Those are different rules and
+## they need different margins, so "gripper" is split by what the contact
+## would be, not by which link it is:
+##
+##   fingertip <-> fingertip   the handover.  8 mm, deliberately tiny: the
+##                             operator brings the two hands together on
+##                             purpose, slowly, to pass an object, and a
+##                             25 mm margin makes that impossible.
+##   anything else touching    a gripper being SHOVED by an arm, or an arm
+##   a gripper link            being crashed into by a gripper. Nothing about
+##                             that is intended, and the gripper is the
+##                             expensive end. Full enclosure, larger margin.
+##
+## The asymmetry is the whole point: the same physical link gets an 8 mm
+## margin against its counterpart fingertip and a 28 mm one against a
+## forearm, because the first is a task and the second is an accident.
+GRIPPER_LINK_SUFFIXES: Tuple[str, ...] = (
+    "_gripper_link", "_gripper_base", "_finger_link",
+    ## _gripper_plate (2026-09-02): prop+bar split off *_gripper_base --
+    ## same physical gripper unit, tighter capsule; see giava.urdf and
+    ## collision_models.pruned_tight_capsule_collision. Without this
+    ## suffix it would fall through to the plain structural margin instead
+    ## of the gripper one, despite being the same assembly gripper_base is.
+    "_gripper_plate",
+)
+## 35 -> 28 mm on 2026-08-28, same reason as the camera class: a gripper
+## approaching another arm was holding sooner than the task needs.  This is
+## still the "an arm is shoving a gripper" enclosure margin and still well
+## above the 10 mm two grippers get between themselves, so the task/accident
+## distinction the split exists for is intact.
+GATE_MARGIN_GRIPPER = float(os.environ.get(
+    "GIAVA_CAPSULE_GATE_MARGIN_GRIPPER", "0.028"))
+
+## GRIPPER <-> GRIPPER: the third case, added 2026-08-27 because the split
+## above was too coarse in practice.
+##
+## Only fingertip<->fingertip got the small margin, so two grippers being
+## brought together were governed by the enclosure "something is shoving a
+## gripper" rule as soon as ANY non-fingertip gripper link was the closest
+## pair -- gripper_base to finger, gripper_link to gripper_link.  With that
+## enforced between the bodies, the fingertips can never get near their own
+## 8 mm allowance, so the handover margin was unreachable for any task that
+## brings the hands together rather than just the fingertips.
+##
+## The reasoning that justified 8 mm for fingertips applies to the gripper
+## bodies too, only less strongly: the operator is deliberately closing two
+## light, compliant, purpose-built-to-touch assemblies, slowly, while
+## watching them.  It is still a task, not an accident.  It gets a margin
+## between the two -- big enough to absorb one tick of travel plus servo
+## tracking error, small enough that the hands can actually meet.
+##
+## What does NOT change: a gripper against a forearm, a shoulder or the
+## camera is still an accident and keeps the full enclosure margin.  The
+## distinction is whether BOTH ends are gripper links, i.e. whether the two
+## things approaching each other are both the parts designed to make contact.
+##
+## 15 -> 10 mm (2026-09-01), NEGATIVE -15 mm briefly on 2026-09-02, then
+## BACK TO A POSITIVE GAP the same day.  The negative margin ("how far may
+## the capsules OVERLAP") was compensation for how FAT the old gripper
+## capsules were: with ~60 mm of padding on the gripper bases, forbidding
+## capsule contact stopped the hands far apart, so overlap had to be
+## allowed to make handovers possible at all.  The 2026-09-02 link split
+## (*_gripper_plate, *_gripper_camera -- see giava.urdf and
+## collision_models.pruned_tight_capsule_collision) removed that padding,
+## and with TIGHT capsules a negative margin stops meaning "let the fat
+## approximations interpenetrate a little" and starts meaning "let the
+## real gripper bodies collide".  So the question flips back to the
+## ordinary one: how far apart must the capsule SURFACES stay.  10 mm --
+## the last positive value -- stops the hands a real standoff short of
+## contact while staying far below the 28 mm accident margin.
+##
+## THIS PAIR CLASS IS COARSE-ONLY BY CONSTRUCTION (`_resolve`, the
+## `_coarse_only` mask on `rescuable`), for two reasons that outlive each
+## other:
+##
+##   1. The margin is now the DESIRED STANDOFF, measured capsule surface
+##      to capsule surface (closest segment points minus both radii --
+##      exact and signed; see capsule_capsule() in pyroki).  Escalating to
+##      GJK on the hulls would let the true surfaces approach to the
+##      margin-plus-leak instead, silently converting a deliberate
+##      standoff into a near-contact allowance.
+##   2. Should this ever go negative again: GJK proves SEPARATION and,
+##      once the origin is captured (real overlap), can only report
+##      "captured" -- no penetration depth without EPA, which this
+##      codebase does not implement -- so it would refuse at the first mm
+##      of overlap regardless of the allowance.
+GATE_MARGIN_GRIPPER_PAIR = float(os.environ.get(
+    "GIAVA_CAPSULE_GATE_MARGIN_GRIPPER_PAIR", "0.010"))
+
+
 def _is_finger(link_name: str) -> bool:
     return link_name.endswith("_finger_link")
+
+
+def _is_gripper(link_name: str) -> bool:
+    return any(link_name.endswith(sfx) for sfx in GRIPPER_LINK_SUFFIXES)
+
+
+def _is_camera(link_name: str) -> bool:
+    return link_name in CAMERA_LINKS
 ## Fine tier ON by default, because GJK made it free.
 ##
 ## The first fine tier fitted capsules to the convex pieces and cost 16 ms
@@ -201,11 +334,65 @@ class CapsuleGate:
             (names[i], names[j]) for i, j in zip(keep_i, keep_j)]
         ## Per-pair margin: fingertip pairs are a handover, not a crash.
         self.margin_finger = float(GATE_MARGIN_FINGER)
+        self.margin_camera = float(GATE_MARGIN_CAMERA)
+
+        self.margin_gripper = float(GATE_MARGIN_GRIPPER)
+        self.margin_gripper_pair = float(GATE_MARGIN_GRIPPER_PAIR)
+
+        def _margin_for(a, b):
+            ## ORDER IS THE DESIGN.  Each rule is checked before the ones it
+            ## must override:
+            ##
+            ## 1. camera first, over everything.  A fingertip approaching the
+            ##    camera housing is exactly the case the small fingertip
+            ##    margin was NOT written for -- that margin exists so two
+            ##    grippers can hand an object over, and nothing is ever
+            ##    handed to the camera.
+            ## 2. fingertip <-> fingertip next: the handover, and the only
+            ##    contact on this robot anyone actually wants.
+            ## 3. any OTHER pair involving a gripper link: full enclosure.
+            ##    This is the rule that stops an arm shoving a gripper, and
+            ##    it deliberately also covers finger-vs-forearm, which fell
+            ##    through to the structural margin before because only
+            ##    finger<->finger was special-cased.
+            ## 4. everything else: aluminium on aluminium.
+            if _is_camera(a) or _is_camera(b):
+                return self.margin_camera
+            if _is_finger(a) and _is_finger(b):
+                return self.margin_finger
+            ## BOTH ends are gripper links: the hands are being brought
+            ## together on purpose.  Checked before the "or" rule below, which
+            ## is what makes the distinction between a task and an accident.
+            if _is_gripper(a) and _is_gripper(b):
+                return self.margin_gripper_pair
+            if _is_gripper(a) or _is_gripper(b):
+                return self.margin_gripper
+            return float(margin)
+
         self._pair_margin = np.array(
-            [self.margin_finger if (_is_finger(a) and _is_finger(b))
-             else float(margin) for a, b in self.pair_names])
+            [_margin_for(a, b) for a, b in self.pair_names])
+        ## Pairs whose verdict must come from the COARSE capsule distance
+        ## alone, never the fine/GJK tier.  Gripper<->gripper pairs are in by
+        ## class: their margin is the intended STANDOFF between the (now
+        ## tight) capsule surfaces, and GJK escalation would quietly replace
+        ## it with margin-plus-leak against the hulls.  Negative margins are
+        ## in unconditionally: GJK has no penetration depth, so it cannot
+        ## honour an overlap allowance.  See GATE_MARGIN_GRIPPER_PAIR.
+        self._coarse_only = np.array(
+            [(_is_gripper(a) and _is_gripper(b)
+              and not (_is_camera(a) or _is_camera(b))
+              and not (_is_finger(a) and _is_finger(b)))
+             for a, b in self.pair_names]) | (self._pair_margin < 0.0)
         self._finger_pairs = int(sum(
-            1 for a, b in self.pair_names if _is_finger(a) and _is_finger(b)))
+            1 for a, b in self.pair_names
+            if _is_finger(a) and _is_finger(b)
+            and not (_is_camera(a) or _is_camera(b))))
+        self._camera_pairs = int(sum(
+            1 for a, b in self.pair_names if _is_camera(a) or _is_camera(b)))
+        self._gripper_pairs = int(np.sum(
+            np.abs(self._pair_margin - self.margin_gripper) < 1e-12))
+        self._gripper_pair_pairs = int(np.sum(
+            np.abs(self._pair_margin - self.margin_gripper_pair) < 1e-12))
 
         @jax.jit
         def _dists(cfg):
@@ -229,6 +416,11 @@ class CapsuleGate:
         self.fine = None
         self.fine_budget_s = GATE_FINE_BUDGET_MS * 1e-3
         self.fine_timeouts = 0
+        ## True when the last largest_safe_fraction() answered from INSIDE
+        ## the margin, i.e. what it returned is an escape step (monotone
+        ## improvement) rather than a proven-clear one.  Read by the control
+        ## loop only to tell the operator which of the two it is.
+        self.last_escape = False
         if fine:
             try:
                 import multi_capsule
@@ -270,12 +462,26 @@ class CapsuleGate:
         if not ok:
             print(f"\n[capsule gate] INSIDE THE MARGIN at {where}: "
                   f"{pair[0]} <-> {pair[1]} at {dist * 1e3:+.1f} mm.\n"
-                  f"  The arms will HOLD until you move them apart. Teleop "
+                  f"  ESCAPE MODE: only motion that does not bring this pair "
+                  f"closer will be sent, until they clear the margin. Teleop "
                   f"is running; nothing has crashed.\n"
                   + self.report(q_urdf, worst=5))
         return ok
 
     # ------------------------------------------------------------------ #
+    def margin_for_pair(self, pair) -> float:
+        """The margin that ACTUALLY applies to a named pair.
+
+        `self.margin` is only the structural default; fingertip, gripper and
+        camera pairs each carry their own.  Anything printing a margin next
+        to a distance must ask for the pair's, or it reports one number
+        against a different number's threshold."""
+        try:
+            k = self.pair_names.index(tuple(pair))
+        except (ValueError, TypeError):
+            return float(self.margin)
+        return float(self._pair_margin[k])
+
     def check(self, q_urdf: np.ndarray) -> Tuple[bool, float,
                                                  Optional[Tuple[str, str]]]:
         """(ok, min_distance_m, offending_pair) at a URDF-coordinate config.
@@ -321,7 +527,50 @@ class CapsuleGate:
         ## millimetre of FITTING error.
         import gjk as _gjk
         self._gjk = _gjk
+
+        ## THE LEAK MUST BE MEASURED ON THE GEOMETRY IT PAYS FOR.
+        ##
+        ## `multi_capsule.decompose_link` measures its leak as the distance
+        ## from the mesh to the union of the CAPSULES it fitted to the VHACD
+        ## pieces.  This tier does not use those capsules -- it runs GJK on
+        ## the HULLS.  And a capsule fitted to a convex piece CONTAINS that
+        ## piece, so
+        ##
+        ##     union(capsules) contains union(hulls)
+        ##     => dist(p, capsules) <= dist(p, hulls)
+        ##     => capsule_leak     <= hull_leak
+        ##
+        ## i.e. the number that used to be applied here is a LOWER bound on
+        ## the error it exists to cover, and the gate was allowing less slack
+        ## than the hulls need -- permissive, which is the one direction a
+        ## safety gate must not err in.
+        ##
+        ## Measured (measure_hull_leak.py, 25k surface samples + every mesh
+        ## vertex, 2026-08-27): the hull leak exceeds the capsule leak on
+        ## 28 of 28 links, median 1.59 mm vs 0.91 mm, and
+        ## middle_upper_arm_link was short by 3.96 mm on its own -- so a pair
+        ## of such links was being given ~8 mm less clearance than it needed,
+        ## against a 25 mm margin.  Several links (middle_camera_body, the
+        ## finger links, middle_wrist_link) had a capsule leak of exactly
+        ## 0.00 mm and a real hull leak near 1 mm: zero allowance at all.
+        ##
+        ## LEAK_SAFETY/LEAK_FLOOR mirror multi_capsule's own treatment: the
+        ## measurement is a finite point sample, so a bare correction would
+        ## be exact only for the points that were looked at.
+        HULL_LEAK_SAFETY = 1.5
+        HULL_LEAK_FLOOR = 5.0e-4          # 0.5 mm
+        measured = {}
+        _lf = _HERE.parent / "ik" / "study" / "results" / "hull_leak.json"
+        if _lf.exists():
+            try:
+                import json as _json
+                measured = {k: float(v["hull_leak_m"])
+                            for k, v in _json.loads(_lf.read_text()).items()}
+            except Exception as exc:
+                print(f"[capsule_gate] could not read {_lf.name}: {exc}")
+
         self._hulls, self._spheres, self._leak = {}, {}, {}
+        _fellback = []
         for name, entry in self.fine.items():
             hs = [np.ascontiguousarray(h, dtype=float)
                   for h in entry.get("hulls", [])]
@@ -329,7 +578,28 @@ class CapsuleGate:
                 continue
             self._hulls[name] = hs
             self._spheres[name] = _gjk.bounding_spheres(hs)
-            self._leak[name] = float(entry["stats"].get("leak_m", 0.0))
+            if name in measured:
+                self._leak[name] = max(measured[name] * HULL_LEAK_SAFETY,
+                                       HULL_LEAK_FLOOR)
+            else:
+                ## No measurement for this link.  Fall back to the capsule
+                ## leak, but say so: it is known to understate the hull
+                ## error, so this link is the weak one in the set.
+                _fellback.append(name)
+                self._leak[name] = max(
+                    float(entry["stats"].get("leak_m", 0.0)) * HULL_LEAK_SAFETY,
+                    HULL_LEAK_FLOOR)
+        if _fellback:
+            print(f"[capsule_gate] no measured hull leak for "
+                  f"{len(_fellback)} link(s) ({', '.join(_fellback[:4])}"
+                  f"{', ...' if len(_fellback) > 4 else ''}); using the "
+                  f"capsule leak, which UNDERSTATES hull error. Re-run "
+                  f"measure_hull_leak.py.")
+        elif measured:
+            _mx = max(self._leak.values()) * 1e3
+            print(f"[capsule_gate] GJK leak allowance from measured hull "
+                  f"containment ({len(measured)} links, max "
+                  f"{_mx:.2f} mm incl. {HULL_LEAK_SAFETY:g}x safety)")
         self._use_gjk = bool(self._hulls)
 
         ## MAX LIFT per link: how much tighter the fine model can possibly
@@ -505,7 +775,26 @@ class CapsuleGate:
         li = np.asarray(self.coll.active_idx_i)
         lj = np.asarray(self.coll.active_idx_j)
         max_lift = self._lift_arr[li] + self._lift_arr[lj]          # (pairs,)
-        rescuable = flagged & (d_coarse + max_lift[None, :] >= self.margin)
+        ## Against EACH PAIR'S OWN margin, not the global one.  With only 4
+        ## fingertip pairs differing this was a harmless approximation; once
+        ## the camera (40 mm) and gripper (28 mm) classes were added, 200 of
+        ## 300 pairs no longer use `self.margin`, and pruning them against it
+        ## decides samples that the fine tier had every chance of clearing --
+        ## which is what made the gate hold on a gripper/camera pair that was
+        ## nowhere near the camera (hardware, 2026-08-27).
+        rescuable = flagged & (d_coarse + max_lift[None, :]
+                               >= self._pair_margin[None, :])
+        ## COARSE-ONLY pairs (gripper<->gripper by class, plus anything with
+        ## a negative margin) are never escalated, whatever `max_lift` says.
+        ## For gripper pairs the margin IS the intended capsule-surface
+        ## standoff -- escalation would let the true surfaces approach to
+        ## margin-plus-leak against the hulls instead, converting a
+        ## deliberate stop-short into a near-contact allowance.  For
+        ## negative margins GJK is structurally unable to help: it reports
+        ## "captured" with no penetration depth (no EPA here), so it would
+        ## refuse at the first mm of overlap regardless of the allowance.
+        ## See GATE_MARGIN_GRIPPER_PAIR.
+        rescuable = rescuable & ~self._coarse_only[None, :]
         doomed = flagged & ~rescuable
         sample_doomed = doomed.any(axis=1)
         ## Only escalate samples that are not already decided.
@@ -562,15 +851,19 @@ class CapsuleGate:
 
         alpha == 1.0  the full step is clear
         0 < alpha < 1 partial step -- the arm stops AT the boundary
-        alpha == 0.0  q_prev itself is already inside the margin; the
-                      operator must move away before anything is sent
+        alpha == 0.0  nothing can be sent: either the step immediately
+                      violates, or q_prev is already inside the margin AND
+                      this step would make it worse (see ESCAPE MODE below;
+                      `self.last_escape` says which)
         """
+        self.last_escape = False
         q_prev = np.asarray(q_prev, dtype=np.float32)
         q_target = np.asarray(q_target, dtype=np.float32)
         delta = q_target - q_prev
         call_deadline = time.perf_counter() + self.fine_budget_s
         if not np.any(np.abs(delta) > 1e-12):
             ok, dist, pair = self.check(q_prev)
+            self.last_escape = not ok
             return (1.0 if ok else 0.0), dist, pair
 
         alphas = np.linspace(0.0, 1.0, int(n_samples) + 1, dtype=np.float32)
@@ -583,7 +876,14 @@ class CapsuleGate:
         ## global min first and comparing to one margin would apply the
         ## structural margin to fingertips.
         slack = d - self._pair_margin[None, :]
-        coarse_min = slack.min(axis=1) + self.margin
+        ## The DISTANCE of the limiting pair, read straight out of `d`.
+        ## It used to be reconstructed as `slack.min() + self.margin`, which
+        ## is only the true distance when the limiting pair happens to use
+        ## the global margin.  For a 50 mm camera pair that understated the
+        ## gap by 25 mm, so the operator was told "-50.2 mm" about two links
+        ## that were comfortably apart.
+        _wcoarse = slack.argmin(axis=1)
+        coarse_min = d[np.arange(len(d)), _wcoarse]
         safe = slack.min(axis=1) >= 0.0
 
         ## ENDPOINT FIRST.  Near the wall the coarse model is negative for
@@ -652,8 +952,47 @@ class CapsuleGate:
         per_sample = coarse_min
 
         if not safe[0]:
-            _, w = self._resolve(cfgs[:1], d[:1])
-            return 0.0, float(per_sample[0]), self.pair_names[int(w[0])]
+            ## ESCAPE MODE (2026-08-27) -- see TableGate.largest_safe_fraction
+            ## for the failure that motivated it.  Returning 0.0 from inside
+            ## the margin is a deadlock, not a safety property: it refuses
+            ## the steps that would climb out as firmly as the ones that
+            ## would push deeper, so nothing can ever restore the condition
+            ## the gate is waiting for.  From inside, the rule becomes
+            ## monotone improvement instead -- stated exactly below.
+            ##
+            ## Judged on the COARSE reading for every sample INCLUDING the
+            ## start, deliberately: the fine tier has only run on some of
+            ## them, and comparing a fine distance against a coarse one
+            ## compares two different models rather than two configurations.
+            ## Coarse pads both bodies, so it is the pessimistic model on
+            ## both sides of the comparison.
+            self.last_escape = True
+            ## Two rules, because one is not enough and the strict
+            ## elementwise version deadlocks all over again.
+            ##
+            ##  (a) NO NEW VIOLATIONS.  Anything clear at the start must
+            ##      still be clear -- escaping one violation by creating a
+            ##      second is not an escape.
+            ##  (b) THE DEEPEST EXISTING VIOLATION MAY NOT GET DEEPER.
+            ##      Reduced over the already-violated set rather than held
+            ##      elementwise: with several pairs inside the margin at
+            ##      once, "no violated pairs may worsen at all" is refused
+            ##      by almost every direction, which is the deadlock this
+            ##      whole branch exists to remove.  Trading depth among
+            ##      already-violated pairs is bounded by the state we are
+            ##      already in; creating a new one is not.
+            viol = slack[0] < 0.0
+            clear_ok = (slack[:, ~viol] >= -1e-6).all(axis=1) \
+                if bool((~viol).any()) else np.ones(len(slack), dtype=bool)
+            worst_viol = slack[:, viol].min(axis=1)
+            viol_ok = worst_viol >= (float(worst_viol[0]) - 1e-6)
+            improving = clear_ok & viol_ok
+            k = (int(np.argmax(~improving)) if not bool(improving.all())
+                 else int(improving.size))
+            j = max(k - 1, 0)
+            wj = int(slack.argmin(axis=1)[j])
+            return (float(alphas[j]), float(coarse_min[j]),
+                    self.pair_names[wj])
         if bool(safe.all()):
             _, w = self._resolve(cfgs[-1:], d[-1:])
             return 1.0, float(per_sample[-1]), self.pair_names[int(w[0])]
@@ -731,7 +1070,13 @@ class CapsuleGate:
         return (f"capsule gate ON: scope={self.scope}, margin="
                 f"{self.margin * 1e3:.0f} mm "
                 f"({self.margin_finger * 1e3:.0f} mm on "
-                f"{self._finger_pairs} fingertip pairs), "
+                f"{self._finger_pairs} fingertip pairs, "
+                f"{self.margin_gripper_pair * 1e3:.0f} mm on "
+                f"{self._gripper_pair_pairs} gripper<->gripper pairs, "
+                f"{self.margin_gripper * 1e3:.0f} mm on "
+                f"{self._gripper_pairs} gripper-vs-structure pairs, "
+                f"{self.margin_camera * 1e3:.0f} mm on "
+                f"{self._camera_pairs} CAMERA pairs), "
                 f"{self._n_pairs} pairs, "
                 f"{tier} (compile {self.compile_ms:.0f} ms). Both models are "
                 f"circumscribed, so every distance is a LOWER BOUND on the "

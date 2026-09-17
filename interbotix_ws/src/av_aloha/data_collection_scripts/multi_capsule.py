@@ -50,11 +50,11 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 _HERE = Path(__file__).resolve().parent
-for _p in (str(_HERE), str(_HERE / "ik_study")):
+for _p in (str(_HERE), str(_HERE.parent / "ik")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-CACHE = _HERE / "ik_study" / "results" / "multi_capsule_decomposition.json"
+CACHE = _HERE.parent / "ik" / "study" / "results" / "multi_capsule_decomposition.json"
 
 ## VHACD settings.  8 pieces is where the tightness gain flattens on these
 ## links; more pieces cost pair-count quadratically for little benefit.

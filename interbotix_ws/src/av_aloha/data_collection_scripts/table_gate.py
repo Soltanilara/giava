@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS, GIVEN THE SOLVER ALREADY HAS A TABLE COST
 ============================================================
-`ik_study/table_collision.py` gives the solver a SOFT cost against the
+`ik/table_collision.py` gives the solver a SOFT cost against the
 tabletop plane, on the INSCRIBED sphere model (optimistic by up to ~18 mm on
 true contact) -- exactly the same two reasons `capsule_gate.py` exists for
 the inter-arm case: a soft cost can be traded away under a hard-enough
@@ -57,9 +57,10 @@ does, exactly when picking something up off it -- a task, not an accident.
 Finger links get a small margin (default 8 mm, matching the inter-arm
 gate's fingertip pairs); every other link keeps the full structural margin.
 
-STATUS: UNVALIDATED, LIKE table_collision.py
-=============================================
-No hardware trial, no sweep. Enabled by default (a floor gate is a coarse,
+STATUS: HARDWARE-VALIDATED, NOT SWEPT
+=====================================
+Validated 2026-09-09 on the real arms -- the tabletop behaviour was confirmed
+to be what was intended.  No margin sweep. Enabled by default (a floor gate is a coarse,
 conservative backstop -- the failure mode of a wrong margin is "stops early",
 not "fails to stop"), but watch `[table gate]` prints on first hardware use
 and raise the margin if it holds somewhere unexpected.
@@ -67,7 +68,7 @@ and raise the margin if it holds somewhere unexpected.
 CONFIG (env, same convention as capsule_gate)
 ==============================================
     GIAVA_TABLE_GATE            1 (default) | 0 -- master switch
-    GIAVA_TABLE_GATE_MARGIN     metres, default 0.025
+    GIAVA_TABLE_GATE_MARGIN     metres, default 0.020
     GIAVA_TABLE_GATE_MARGIN_FINGER  metres, default 0.008
     GIAVA_TABLE_GATE_Z          metres, default 0.0 (world frame, same
                                  convention as base_validation.py --table-z)
@@ -84,12 +85,23 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 _HERE = Path(__file__).resolve().parent
-for _p in (str(_HERE), str(_HERE / "ik_study")):
+for _p in (str(_HERE), str(_HERE.parent / "ik")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 GATE_ENABLED = os.environ.get("GIAVA_TABLE_GATE", "1") == "1"
-GATE_MARGIN = float(os.environ.get("GIAVA_TABLE_GATE_MARGIN", "0.025"))
+## 25 -> 20 mm on 2026-08-28.  Hardware: fingertips reach the table nicely
+## (they run on GATE_MARGIN_FINGER, untouched), but a gripper YAWED flat to
+## the table is governed by this structural margin and stopped ~30 mm up,
+## which is more standoff than the task wants.
+## 20 -> 15 mm on 2026-09-01: still too much standoff in practice -- the
+## camera arm working low over the scene is also held here (the table gate
+## has no camera tier; camera links run on this structural margin).  15 mm
+## is the floor the inter-arm gate documents for trusting servo tracking,
+## and the plane check is EXACT (closed-form capsule-vs-plane, no coarse
+## pad on the plane side), so 15 mm here is not the gamble 15 mm would be
+## between two coarse capsules.  Do not go lower without a hardware sweep.
+GATE_MARGIN = float(os.environ.get("GIAVA_TABLE_GATE_MARGIN", "0.015"))
 GATE_MARGIN_FINGER = float(os.environ.get("GIAVA_TABLE_GATE_MARGIN_FINGER", "0.008"))
 GATE_TABLE_Z = float(os.environ.get("GIAVA_TABLE_GATE_Z", "0.0"))
 
@@ -167,6 +179,11 @@ class TableGate:
             robot.joints.num_actuated_joints, dtype=np.float32)))
         self._n_links = int(d.size)
         self.compile_ms = (time.perf_counter() - t0) * 1e3
+        ## True when the last largest_safe_fraction() answered from inside
+        ## the margin, i.e. the fraction returned is an ESCAPE step rather
+        ## than a proven-clear one.  The control loop reads it only to say
+        ## the right thing to the operator.
+        self.last_escape = False
 
     # ------------------------------------------------------------------ #
     def check(self, q_urdf: np.ndarray) -> Tuple[bool, float, Optional[str]]:
@@ -194,7 +211,8 @@ class TableGate:
             print(f"\n[table gate] INSIDE THE MARGIN at {where}: "
                   f"{link} at {dist * 1e3:+.1f} mm above the table "
                   f"(table z={self.table_z * 1e3:+.1f} mm).\n"
-                  f"  The arms will HOLD until this link moves clear. "
+                  f"  ESCAPE MODE: only motion that does not lower this "
+                  f"link further will be sent, until it clears the margin. "
                   f"Teleop is running; nothing has crashed.\n"
                   + self.report(q_urdf, worst=5))
         return ok
@@ -206,12 +224,26 @@ class TableGate:
         WHOLE swept segment stays clear of the table -- same swept-and-scale
         shape as CapsuleGate.largest_safe_fraction (see that docstring for
         why scaling beats refusing), minus the fine-tier escalation, which
-        this gate never needs (capsule-vs-plane is already exact)."""
+        this gate never needs (capsule-vs-plane is already exact).
+
+        ESCAPE MODE (2026-08-27).  When q_prev ITSELF is inside the margin,
+        this used to return 0.0 -- which is a deadlock, not a safety
+        property: every step is refused, including the ones that climb out,
+        so the arm can never reach a state where motion is allowed again.
+        Hardware found it: an arm lost torque, fell over the front edge of
+        the table, and the gate then held all three arms forever at
+        `right_gripper_base -307.2 mm`.  From inside the margin the rule
+        becomes MONOTONE IMPROVEMENT -- send the longest prefix of the step
+        whose worst link never reads lower than it does right now -- so
+        motion out is allowed and motion further in is still refused.  It
+        degenerates to the old behaviour exactly when nothing improves."""
+        self.last_escape = False
         q_prev = np.asarray(q_prev, dtype=np.float32)
         q_target = np.asarray(q_target, dtype=np.float32)
         delta = q_target - q_prev
         if not np.any(np.abs(delta) > 1e-12):
             ok, dist, link = self.check(q_prev)
+            self.last_escape = not ok
             return (1.0 if ok else 0.0), dist, link
 
         alphas = np.linspace(0.0, 1.0, int(n_samples) + 1, dtype=np.float32)
@@ -225,7 +257,36 @@ class TableGate:
         if bool(safe.all()):
             return 1.0, float(per_sample[-1]), None
         if not safe[0]:
-            return 0.0, float(per_sample[0]), self.link_names[int(which[0])]
+            ## Already inside the margin -- monotone-improvement rule.  The
+            ## comparison is against the START's own worst reading, so a
+            ## step is admissible only while it makes nothing worse; the
+            ## 1 um tolerance is float32 noise, not a budget to sink by.
+            self.last_escape = True
+            ## Two rules, because one is not enough and the strict
+            ## elementwise version deadlocks all over again.
+            ##
+            ##  (a) NO NEW VIOLATIONS.  Anything clear at the start must
+            ##      still be clear -- escaping one violation by creating a
+            ##      second is not an escape.
+            ##  (b) THE DEEPEST EXISTING VIOLATION MAY NOT GET DEEPER.
+            ##      Reduced over the already-violated set rather than held
+            ##      elementwise: with several links inside the margin at
+            ##      once, "no violated links may worsen at all" is refused
+            ##      by almost every direction, which is the deadlock this
+            ##      whole branch exists to remove.  Trading depth among
+            ##      already-violated links is bounded by the state we are
+            ##      already in; creating a new one is not.
+            viol = slack[0] < 0.0
+            clear_ok = (slack[:, ~viol] >= -1e-6).all(axis=1) \
+                if bool((~viol).any()) else np.ones(len(slack), dtype=bool)
+            worst_viol = slack[:, viol].min(axis=1)
+            viol_ok = worst_viol >= (float(worst_viol[0]) - 1e-6)
+            improving = clear_ok & viol_ok
+            k = (int(np.argmax(~improving)) if not bool(improving.all())
+                 else int(improving.size))
+            j = max(k - 1, 0)     # last index of the improving prefix
+            return (float(alphas[j]), float(per_sample[j]),
+                    self.link_names[int(which[j])])
 
         first_bad = int(np.argmax(~safe))
         lo_a, hi_a = float(alphas[first_bad - 1]), float(alphas[first_bad])
@@ -269,7 +330,8 @@ class TableGate:
                 f"{self.table_z * 1e3:+.1f} mm (compile {self.compile_ms:.0f} ms). "
                 f"Capsules are circumscribed, so every distance is a LOWER "
                 f"BOUND on the true mesh-to-table distance -- a pass proves "
-                f"clearance. UNVALIDATED: no hardware trial or sweep yet.")
+                f"clearance. Hardware-validated 2026-09-09 on the real "
+                f"arms; margin not swept.")
 
 
 def build_gate(robot, urdf) -> Optional[TableGate]:

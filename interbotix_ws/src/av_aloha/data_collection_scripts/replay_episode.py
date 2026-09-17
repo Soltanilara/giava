@@ -55,6 +55,13 @@ except ImportError:
 if __package__:
     from .data_col_config import ARM_MODES, ACTION_LAYOUTS, DATASET_ROOT
     from .arm_config import ARM_CONFIG
+    from .dataset import (
+        BackgroundEpisodeSaver,
+        quiet_libav,
+        add_camera_features,
+        build_action_names,
+        build_state_names,
+    )
     from .robot_control import (
         create_and_configure_robot,
         stop_robots,
@@ -66,6 +73,13 @@ if __package__:
 else:
     from data_col_config import ARM_MODES, ACTION_LAYOUTS, DATASET_ROOT
     from arm_config import ARM_CONFIG
+    from dataset import (
+        BackgroundEpisodeSaver,
+        quiet_libav,
+        add_camera_features,
+        build_action_names,
+        build_state_names,
+    )
     from robot_control import (
         create_and_configure_robot,
         stop_robots,
@@ -80,6 +94,226 @@ else:
 ## timed replay is allowed to start.  Generous: the point is to catch "did not
 ## move at all", not to grade the approach.
 START_POSE_TOLERANCE = float(os.environ.get("GIAVA_REPLAY_START_TOL", "0.15"))
+
+## Replay datasets go under dataset/replays/<task>/<run>_ep<N>_<timestamp>,
+## a sibling of dataset/lerobot rather than a child of it -- see the comment at
+## the default in main().
+REPLAY_ROOT = Path(DATASET_ROOT).parent / "replays"
+
+
+## ---------------------------------------------------------------------------
+## RECORDING A REPLAY
+##
+## The point is a CONTROLLED REPEAT: the same commanded trajectory sent at the
+## same rate, N times, with everything measurable recorded each time.  What that
+## buys is two different numbers, and they answer different questions:
+##
+##   command -> measured, within one run   how well the arm follows an order
+##   measured -> measured, across runs     how REPEATABLE the hardware is
+##
+## The second is the interesting one and it cannot be obtained from a single
+## recording session.  Backlash, gravity sag, thermal drift in the servos and
+## the driver's own velocity clamping all show up as run-to-run spread on an
+## identical command stream.  That spread is the floor: no policy trained on
+## this rig can be asked to reproduce a trajectory more precisely than the rig
+## reproduces its own.
+##
+## The recorded columns are DELIBERATELY the same ones data collection writes --
+## build_state_names / build_action_names / add_camera_features are imported
+## from dataset.py rather than restated -- so a replay dataset can be loaded,
+## diffed and plotted by exactly the same code as the recording it came from.
+##
+## ONE COLUMN IS OMITTED: observation.ee_pose.  It is FK of the commanded
+## joints, i.e. derived data, and computing it here would mean importing pyroki
+## and JAX and duplicating study_ik's driver->URDF calibration for a number that
+## can be recomputed offline from observation.state whenever it is wanted.  It
+## would also put a JAX context on a GPU that a live collection session is
+## probably using.  analyze_replays.py works entirely in joint space.
+class ReplayRecorder:
+    """Writes replay runs into a lerobot dataset, one episode per run."""
+
+    def __init__(self, root, mode, active_cameras, fps, provenance):
+        from lerobot.datasets import LeRobotDataset
+
+        self.mode = mode
+        self.active_cameras = list(active_cameras)
+        self.root = Path(root)
+        self.arms = ARM_MODES[mode]
+
+        features = {}
+        add_camera_features(features, self.active_cameras)
+        state_names = build_state_names(self.arms)
+        action_names = build_action_names(self.arms)
+        features["observation.state"] = {
+            "dtype": "float32", "shape": (len(state_names),),
+            "names": state_names}
+        features["action"] = {
+            "dtype": "float32", "shape": (len(action_names),),
+            "names": action_names}
+        for arm in self.arms:
+            features[f"observation.timestamps.{arm}"] = {
+                "dtype": "float64", "shape": (1,), "names": None}
+
+        self.dataset = LeRobotDataset.create(
+            repo_id=f"deviamar/replay_{provenance['task'] or 'unknown'}",
+            root=str(self.root),
+            fps=int(fps),
+            features=features,
+            streaming_encoding=True,
+            encoder_queue_maxsize=120,
+        )
+        ## Same background writer the collection loop uses: a save must not
+        ## stall the send loop, and each run gets its own encoder so runs
+        ## cannot end up in one video.  See dataset.py.
+        self.saver = BackgroundEpisodeSaver(self.dataset)
+        self.task_string = f"replay of {provenance['source_root']} " \
+                           f"episode {provenance['source_episode']}"
+
+        ## PROVENANCE IS THE WHOLE VALUE OF THESE FILES.  A replay dataset that
+        ## does not say what it replayed is indistinguishable from a recording,
+        ## and comparing it against the wrong source is a silent wrong answer.
+        (self.root / "replay_meta.json").write_text(
+            json.dumps(dict(provenance,
+                            mode=mode,
+                            arms=self.arms,
+                            active_cameras=self.active_cameras,
+                            fps=int(fps),
+                            state_names=state_names,
+                            action_names=action_names), indent=2))
+        print(f"[record] writing replay runs to {self.root}")
+
+    def begin_run(self, run_idx):
+        idx = self.saver.begin_episode()
+        print(f"[record] run {run_idx} -> episode_{idx:04d}")
+        return idx
+
+    def add(self, robots, commanded, latest_frames, latest_timestamps,
+            frame_lock, stamp):
+        """One recorded step: measured joints + the command that produced them."""
+        frame = {}
+
+        if self.active_cameras:
+            with frame_lock:
+                for camera in self.active_cameras:
+                    img = latest_frames.get(camera)
+                    ts = latest_timestamps.get(camera)
+                    if img is None or ts is None:
+                        return False          # camera not up yet; skip the row
+                    frame[f"observation.images.{camera}"] = torch.from_numpy(
+                        img.copy())
+                    frame[f"observation.timestamps.{camera}"] = torch.tensor(
+                        [ts], dtype=torch.float64)
+
+        state, action = [], []
+        for arm in self.arms:
+            bot = robots[arm]
+            n = ARM_CONFIG[arm]["num_joints"]
+            js = bot.dxl.joint_states
+            state.extend(np.asarray(js.position[:n], dtype=np.float32))
+            if ARM_CONFIG[arm]["has_gripper"]:
+                state.append(float(js.position[6]))
+            action.extend(np.asarray(commanded[f"{arm}_arm"], dtype=np.float32))
+            if ARM_CONFIG[arm]["has_gripper"]:
+                action.append(float(commanded.get(f"{arm}_gripper", 0.0)))
+            frame[f"observation.timestamps.{arm}"] = torch.tensor(
+                [stamp], dtype=torch.float64)
+
+        frame["observation.state"] = torch.tensor(state, dtype=torch.float32)
+        frame["action"] = torch.tensor(action, dtype=torch.float32)
+        self.dataset.add_frame(frame, self.task_string)
+        return True
+
+    def end_run(self, ok=True):
+        try:
+            return self.saver.save_episode_async("success" if ok else "failure")
+        except Exception as exc:
+            print(f"[record] nothing to save for this run ({exc})")
+            return None
+
+    def close(self):
+        self.saver.close()
+        ## A replay that never got past the start-pose check leaves a valid but
+        ## EMPTY dataset behind.  Say so: an empty run folder sitting next to
+        ## real ones is the kind of thing that gets loaded later and quietly
+        ## contributes nothing, or worse, gets counted.
+        if self.saver.saved_count == 0:
+            print(f"[record] no runs were recorded -- {self.root} is empty "
+                  f"and safe to delete.")
+        else:
+            print(f"[record] {self.saver.saved_count} run(s) -> {self.root}")
+            print(f"[record] compare them:  python analyze_replays.py "
+                  f"{self.root} --per-joint")
+
+
+def start_replay_cameras(mode, want_cameras):
+    """Bring up the same cameras collection uses.  Returns (names, dicts...).
+
+    Returns an EMPTY camera list rather than raising when the devices cannot be
+    opened -- which is the expected case while a collection session has them.
+    An arm-only replay dataset is still worth having; a crashed replay with the
+    arms energised is not.
+    """
+    import threading as _th
+    if not want_cameras:
+        return [], {}, {}, _th.Lock(), None
+    try:
+        if __package__:
+            from .camera_manager import (CameraConfig, get_active_cameras,
+                                         setup_cameras)
+        else:
+            from camera_manager import (CameraConfig, get_active_cameras,
+                                        setup_cameras)
+    except Exception as exc:
+        print(f"[record] camera_manager unavailable ({exc}) -- arms only")
+        return [], {}, {}, _th.Lock(), None
+
+    names = get_active_cameras(mode, CameraConfig(top_active=True,
+                                                  low_active=True))
+    latest_frames, latest_timestamps = {}, {}
+    frame_lock = _th.Lock()
+    shutdown = _th.Event()
+    try:
+        setup_cameras(names, shutdown, frame_lock, latest_frames,
+                      latest_timestamps)
+    except Exception as exc:
+        print(f"[record] could not open cameras ({exc}).")
+        print("[record] Recording arm data only -- a collection session "
+              "holding the devices is the usual cause.")
+        shutdown.set()
+        return [], {}, {}, frame_lock, None
+    print(f"[record] cameras: {names}")
+    return names, latest_frames, latest_timestamps, frame_lock, shutdown
+
+
+def open_local_dataset(root, video_backend="pyav"):
+    """Open a dataset that lives on disk, without asking the hub about it.
+
+    LeRobotDataset's first positional argument is a REPO ID, not a path.
+    Passing the path there sends it to huggingface_hub, which rejects it as a
+    malformed repo id -- so a purely local dataset could not be opened at all.
+    The repo id in meta/info.json is the dataset's own record of what it would
+    be called on the hub; `root` is what actually gets read.
+    """
+    from lerobot.datasets import LeRobotDataset
+
+    root = Path(root)
+    if not (root / "meta" / "episodes").is_dir():
+        raise SystemExit(
+            f"{root} has no meta/episodes -- it was never finalized, so its "
+            "episode boundaries were never written and nothing can read it "
+            "back.\n  Episode metadata is buffered (10 episodes) and flushed "
+            "by finalize(), which runs when data collection exits with 'q' or "
+            "through atexit.\n  A session killed with SIGKILL never gets "
+            "there.  A session still RUNNING has not got there yet -- quit it "
+            "first, then replay.")
+    repo_id = "local/dataset"
+    info = root / "meta" / "info.json"
+    if info.is_file():
+        try:
+            repo_id = json.load(open(info)).get("repo_id") or repo_id
+        except Exception:
+            pass
+    return LeRobotDataset(repo_id, root=str(root), video_backend=video_backend)
 
 
 def to_numpy_1d(x):
@@ -274,7 +508,37 @@ def main():
     parser.add_argument("--start-offset", type=int, default=0)
     parser.add_argument("--verbose", action="store_true",
                         help="Print every step instead of a ~1 Hz summary.")
+    parser.add_argument("--record", action="store_true",
+                        help="Record each replay run as an episode of a new "
+                             "lerobot dataset: the same state/action/timestamp "
+                             "columns collection writes, plus every camera. "
+                             "Compare the runs with analyze_replays.py.")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="Replay the episode this many times. Run-to-run "
+                             "spread on an identical command stream is the "
+                             "hardware's repeatability floor.")
+    parser.add_argument("--record-root", type=str, default=None,
+                        help="Where to write the replay dataset. Default: "
+                             "dataset/replays/<task>/<run>_ep<N>_<timestamp>.")
+    parser.add_argument("--no-cameras", action="store_true",
+                        help="Record arm data only. Use this when a collection "
+                             "session already holds the cameras.")
+    parser.add_argument("--settle", type=float, default=1.0,
+                        help="Seconds to wait between runs before re-homing.")
+    parser.add_argument("--note", type=str, default=None,
+                        help="Free-text note stored in replay_meta.json, e.g. "
+                             "'cold servos' or 'after regrease'.")
     args = parser.parse_args()
+
+    ## Same reason as data_collection: keep libav/x264 off the console, so the
+    ## per-run [record] and [move] lines stay readable.
+    quiet_libav()
+
+    if args.repeat < 1:
+        raise SystemExit("--repeat must be at least 1")
+    if args.record and args.dry_run:
+        raise SystemExit("--record and --dry-run are mutually exclusive: "
+                         "there is nothing to record without motion.")
 
     if args.dataset_root is not None:
         dataset_root = Path(args.dataset_root).expanduser().resolve()
@@ -313,7 +577,7 @@ def main():
     else:
         print("[meta] no meta.json in this dataset -- mode must come from --mode")
 
-    dataset = LeRobotDataset(str(dataset_root), video_backend="pyav")
+    dataset = open_local_dataset(dataset_root)
 
     start, end, n_eps = episode_range(dataset, args.episode_idx)
     start = min(start + args.start_offset, end)
@@ -414,7 +678,45 @@ def main():
     ## one frame instead of each command being re-judged independently.
     waist_turn_shift = 0.0
 
-    try:
+    ## Cameras come up BEFORE the arms move so the first run is not recorded
+    ## with half the streams missing.  An empty list here means "arms only";
+    ## start_replay_cameras() prefers that to failing while the arms are live.
+    rec_cameras, latest_frames, latest_timestamps, frame_lock, cam_shutdown = (
+        start_replay_cameras(mode, args.record and not args.no_cameras))
+
+    recorder = None
+    if args.record:
+        if args.record_root:
+            record_root = Path(args.record_root).expanduser().resolve()
+        else:
+            ## Replays live in their own tree beside the recordings, NOT inside
+            ## the run they replay.  A replay is not an episode of that dataset
+            ## -- it has different columns, a different provenance and no
+            ## teleop -- and nesting it under dataset_root puts it in the path
+            ## of anything that globs for runs, which is how a replay ends up
+            ## in a training set.  The name carries what it replayed so the
+            ## folder is identifiable without opening replay_meta.json.
+            record_root = (REPLAY_ROOT / (meta.get("task") or "unknown")
+                           / f"{dataset_root.name}_ep{args.episode_idx:04d}"
+                           f"_{time.strftime('%Y%m%d_%H%M%S')}")
+        recorder = ReplayRecorder(
+            record_root, mode, rec_cameras,
+            fps=(args.fps or dataset.fps),
+            provenance={
+                "source_root": str(dataset_root),
+                "source_episode": int(args.episode_idx),
+                "source_rows": [int(start), int(end)],
+                "task": meta.get("task"),
+                "steps": int(total_steps),
+                "runs_requested": int(args.repeat),
+                "note": args.note,
+                "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+            })
+
+    def run_pass(run_idx):
+        """One full replay of the episode.  Returns (steps_done, per-arm error)."""
+        waist_turn_shift = 0.0
+
         for arm_name, bot in robots.items():
             reset_arm(bot, arm_name)
             n = ARM_CONFIG[arm_name]["num_joints"]
@@ -461,7 +763,12 @@ def main():
             print(f"[start] {arm_name}: in position "
                   f"({residual:.3f} rad residual).")
 
-        print(f"Starting replay of {total_steps} steps. Press Ctrl+C to stop.")
+        if recorder is not None:
+            recorder.begin_run(run_idx)
+
+        print(f"Starting replay of {total_steps} steps"
+              f"{f' (run {run_idx + 1}/{args.repeat})' if args.repeat > 1 else ''}"
+              ". Press Ctrl+C to stop.")
 
         t0_wall = time.monotonic()
         lag_max = 0.0
@@ -469,7 +776,9 @@ def main():
         err_sum = {arm: 0.0 for arm in arm_names}
         err_max = {arm: 0.0 for arm in arm_names}
         err_n = 0
+        recorded = 0
         next_report = t0_wall + 1.0
+        i = -1
 
         for i in range(total_steps):
             if stop_requested or rospy.is_shutdown():
@@ -486,17 +795,33 @@ def main():
                     lag_max = max(lag_max, lag)
 
             parsed = parse_action(actions[i], mode)
+            ## The waist shift is part of the command that was actually SENT,
+            ## so fold it in once here -- the recorded action column and the
+            ## reporting below then both describe the same numbers the servos
+            ## received, not the ones on disk in the source episode.
+            if waist_turn_shift and "middle_arm" in parsed:
+                parsed = dict(parsed)
+                parsed["middle_arm"] = np.asarray(
+                    parsed["middle_arm"], dtype=float).copy()
+                parsed["middle_arm"][0] += waist_turn_shift
 
             for arm_name, bot in robots.items():
                 cmd = np.asarray(parsed[f"{arm_name}_arm"], dtype=float)
-                if arm_name == "middle" and waist_turn_shift:
-                    cmd = cmd.copy()
-                    cmd[0] += waist_turn_shift
                 replay_arm_command(bot, cmd)
 
                 gripper_key = f"{arm_name}_gripper"
                 if gripper_key in parsed:
                     command_gripper(bot, float(parsed[gripper_key]))
+
+            ## Recorded IMMEDIATELY after the send, so the measured joints in a
+            ## row are the arm's response to the command in the row before it --
+            ## the same one-tick-stale relationship data collection records, so
+            ## the two datasets can be compared without a phase correction.
+            if recorder is not None:
+                if recorder.add(robots, parsed, latest_frames,
+                                latest_timestamps, frame_lock,
+                                time.monotonic()):
+                    recorded += 1
 
             ## Reporting reads the joint states the driver publishes
             ## asynchronously -- no extra wait, so it costs the loop nothing
@@ -508,9 +833,6 @@ def main():
                     measured_q = np.asarray(
                         bot.dxl.joint_states.position[:n], dtype=float)
                     cmd = np.asarray(parsed[f"{arm_name}_arm"], dtype=float)
-                    if arm_name == "middle" and waist_turn_shift:
-                        cmd = cmd.copy()
-                        cmd[0] += waist_turn_shift
                     err = float(np.linalg.norm(measured_q - cmd))
                     err_sum[arm_name] += err
                     err_max[arm_name] = max(err_max[arm_name], err)
@@ -523,7 +845,8 @@ def main():
                 next_report = now + 1.0
 
         elapsed = time.monotonic() - t0_wall
-        print(f"\nReplayed {i + 1}/{total_steps} steps in {elapsed:.1f} s "
+        done = i + 1
+        print(f"\nReplayed {done}/{total_steps} steps in {elapsed:.1f} s "
               f"(recorded {rel[total_steps - 1]:.1f} s)")
         if lagging:
             print(f"[timing] {lagging} steps ran late, worst "
@@ -534,10 +857,35 @@ def main():
                       f"{err_sum[arm_name] / err_n:.4f} rad, max "
                       f"{err_max[arm_name]:.4f} rad (sampled {err_n}x)")
 
+        if recorder is not None:
+            print(f"[record] run {run_idx}: {recorded} frames recorded")
+            recorder.end_run(ok=(done == total_steps and not stop_requested))
+        return done
+
+    try:
+        for run_idx in range(args.repeat):
+            if args.repeat > 1:
+                print("\n" + "=" * 60)
+                print(f"RUN {run_idx + 1} of {args.repeat}")
+                print("=" * 60)
+            run_pass(run_idx)
+            if stop_requested or rospy.is_shutdown():
+                break
+            if run_idx + 1 < args.repeat:
+                ## Let the arms settle before the next reset: a run started
+                ## while the previous one is still coasting begins from a
+                ## different pose, which is the one thing a repeatability
+                ## measurement must not vary.
+                time.sleep(args.settle)
+
     except KeyboardInterrupt:
         request_stop()
     finally:
         stop_robots(robots)
+        if recorder is not None:
+            recorder.close()
+        if cam_shutdown is not None:
+            cam_shutdown.set()
 
 
 if __name__ == "__main__":

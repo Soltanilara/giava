@@ -68,6 +68,21 @@ def apply(default: Optional[str] = None) -> str:
         name = DEFAULT
     os.environ.setdefault("JAX_PLATFORMS", PLATFORMS[name])
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+    ## Persistent compilation cache: the coupled IK and the gates are jitted
+    ## for a fixed robot, so every launch was re-compiling the same programs.
+    ## jax reads these as config flags; the cache survives across sessions
+    ## and is keyed on program + jax/XLA version + platform, so a CPU and a
+    ## GPU launch keep separate entries.  Delete the dir to force a rebuild.
+    os.environ.setdefault(
+        "JAX_COMPILATION_CACHE_DIR",
+        os.path.join(os.path.expanduser("~"), ".cache", "giava_jax"))
+    os.environ.setdefault("JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS", "0.5")
+    os.environ.setdefault("JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES", "0")
+    ## GIAVA_JAX_CACHE_DEBUG=1 makes jax print WHY a cache lookup missed --
+    ## the only way to tell a genuinely new program from a key that shifts
+    ## run to run (a constant baked in from measured hardware, say).
+    if os.environ.get("GIAVA_JAX_CACHE_DEBUG", "").strip() == "1":
+        os.environ["JAX_EXPLAIN_CACHE_MISSES"] = "1"
     os.environ["GIAVA_JAX_PLATFORM"] = name
     return name
 

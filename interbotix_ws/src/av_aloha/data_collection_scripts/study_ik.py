@@ -1,7 +1,7 @@
 """Coupled three-arm IK for data collection — the ik_study winner, adapted.
 
 Wraps the study's validated deployment configuration
-(`ik_study/RESULTS_FINAL.md`, `ik_study/COLLISION_STUDY.md`):
+(`ik/study/RESULTS_FINAL.md`, `ik/study/COLLISION_STUDY.md`):
 
     pose_cost_analytic_jac ×3      pos 50 / ori 10
     limit_constraint               (pyroki augmented Lagrangian)
@@ -60,9 +60,20 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-_IK_STUDY = Path(__file__).resolve().parent / "ik_study"
-if str(_IK_STUDY) not in sys.path:
-    sys.path.insert(0, str(_IK_STUDY))
+## The solver modules live in av_aloha/ik/, a sibling of this directory --
+## the research phases that produced them are in ik/study/, and are NOT
+## imported here.  Resolved relative to this file rather than the CWD so the
+## entry points work from anywhere.
+_IK = Path(__file__).resolve().parent.parent / "ik"
+## The pruned-sphere and table collision models read their fitted parameters
+## from the study's results tree; that directory moved with the reorg, and
+## the two call sites below went stale (NameError on 2026-09-14).
+if not (_IK / "variants.py").exists():
+    raise SystemExit(
+        f"the IK solver modules are missing from {_IK} -- study_ik.py needs "
+        f"collision_models.py, table_collision.py and variants.py there.")
+if str(_IK) not in sys.path:
+    sys.path.insert(0, str(_IK))
 
 import jaxlie  # noqa: E402
 from yourdfpy import URDF  # noqa: E402
@@ -84,14 +95,21 @@ ARM_ORDER = ("left", "right", "middle")
 WAIST_URDF_OFFSET = np.pi
 
 ## Per-joint driver<->URDF offsets for the middle arm (beyond the waist).
-## The real 7-dof arm's assembly zeros differ from the description URDF's
-## joint zeros -- confirmed on hardware 2026-08: the same driver joint vector
-## produces DIFFERENT physical poses in sim (URDF frame by construction) and
-## on the real arm.  FK on the real arm is therefore wrong unless corrected:
-##     urdf_j = driver_j - offset_j          (offset = driver@ref - urdf@ref)
-## Offsets are calibrated with make_middle_offsets.py and stored by JOINT NAME
-## in middle_joint_offsets.json; absent file = all zeros (waist keeps its own
-## dedicated machinery above).
+##     urdf_j = sign_j * (driver_j - offset_j)
+## Calibrated with make_middle_offsets.py, stored by JOINT NAME in
+## middle_joint_offsets.json; absent or empty file = identity (the waist keeps
+## its own dedicated machinery above).
+##
+## EMPTY SINCE 2026-08-21, and that is the intended end state.  The 2026-08
+## calibration was folded into giava.urdf itself -- axes negated on
+## middle_shoulder/middle_upper_arm (they were modelled `0 -1 0` against the
+## vendor description's `0 1 0`), Rot(axis, -offset) post-multiplied into the
+## other four joints' origins, limits transformed to match.  The mechanism
+## stays here because it is the only correct place for a genuine hardware
+## offset, but prefer the URDF: a correction living in this file is invisible
+## to everything that loads giava.urdf directly (RViz, pyroki's collision
+## model, view_collision.py, capsule_gate_view.py), which is exactly how sim
+## and real came to be two different robots.
 MIDDLE_OFFSETS_FILE = Path(__file__).resolve().parent / "middle_joint_offsets.json"
 
 
@@ -140,7 +158,7 @@ def _load_middle_offsets():
 ## TUNING KNOBS — edit these while testing on the real arms.
 ##
 ## Everything that shapes the feel of teleoperation is here, including the pose
-## weights, which used to be inherited silently from ik_study/baseline.py
+## weights, which used to be inherited silently from ik/baseline.py
 ## (DEFAULT_POS_WEIGHT / DEFAULT_ORI_WEIGHT).  They are stated explicitly now so
 ## there is one place to change, and so the deployed value is visible rather
 ## than buried two files away.
@@ -163,7 +181,7 @@ def _env(name: str, default: float) -> float:
 
 
 ## Pose tracking.  ori 10 is the ik_study value; the benchmark's weight search
-## (ik_benchmark/results/opt2_best.json, two independent runs) converged on
+## (ik/benchmark/results/opt2_best.json, two independent runs) converged on
 ## ~4.7 instead, and ori 10 is the leading suspect for jerky motion and the
 ## shoulder swinging -- at that stiffness the solver contorts the whole arm to
 ## satisfy wrist orientation.
@@ -218,11 +236,13 @@ COLLISION_MARGIN = _env("GIAVA_IK_COLLISION_MARGIN", 0.020)  # m
 ## clamped command regardless of what is selected here.
 COLLISION_MODEL = os.environ.get("GIAVA_IK_COLLISION_MODEL", "sphere")
 
-## Tabletop world-collision (table_collision.py). UNVALIDATED -- no Phase-9-
-## style margin x weight sweep has been run for this term, unlike every other
-## weight above.  OFF by default; opt in per-run with
+## Tabletop world-collision (table_collision.py). HARDWARE-VALIDATED
+## 2026-09-09 on the real arms -- the tabletop behaviour was confirmed to be
+## what was intended.  What has still NOT been run is a Phase-9-style
+## margin x weight sweep, unlike every other weight above, so these numbers
+## are a validated working point rather than a tuned optimum.  OFF by default; opt in per-run with
 ##     GIAVA_IK_TABLE_ENABLE=1 python data_collection.py
-## and inspect it in ik_study/view_table_collision.py before trusting it on
+## and inspect it in ik/study/view_table_collision.py before trusting it on
 ## hardware.  Margin/weight default to the self-collision winner's values as
 ## a starting point only.
 TABLE_ENABLE = os.environ.get("GIAVA_IK_TABLE_ENABLE", "0") == "1"
@@ -253,7 +273,7 @@ STUDY_DT = 0.02
 def describe_weights() -> str:
     """One-line summary, printed at startup so the deployed values are logged."""
     table = (
-        f" table=UNVALIDATED,w={TABLE_W:g},margin={TABLE_MARGIN * 1e3:g}mm,"
+        f" table=hw-validated,w={TABLE_W:g},margin={TABLE_MARGIN * 1e3:g}mm,"
         f"z={TABLE_Z * 1e3:g}mm"
         if TABLE_ENABLE else ""
     )
@@ -278,17 +298,24 @@ class CoupledStudyIK:
         max_iterations: int = MAX_ITERATIONS,
         waist_driver_shift: float = 0.0,
     ) -> None:
-        """`waist_driver_shift`: the middle waist's Homing_Offset in radians
-        (reported = actual + offset).  The legacy driver<->URDF relation was
-        urdf = driver + pi with offset 0; with an offset h the servo's reported
-        values move by h, so the conversion becomes urdf = driver + (pi - h).
-        Passing the register value read at startup keeps this class correct for
-        any offset without editing constants."""
+        """`waist_driver_shift`: the middle waist's total driver-frame shift
+        in radians, i.e. driver_new = driver_old + shift.
+
+        TWO THINGS FEED IT and they are not interchangeable: a physical
+        re-clock of the motor (unlimited, invisible to every register, and
+        since 2026-09-11 equal to -pi here) and Homing_Offset (a register,
+        inert under ext_position).  robot_control.resolve_middle_waist_shift
+        combines them; pass its result.
+
+        The legacy relation was urdf = driver + pi at shift 0; with a shift h
+        it becomes urdf = driver + (pi - h).  At h = -pi that offset is 2*pi
+        and, after the [-pi, pi] wrap in driver_to_urdf, the two frames
+        coincide."""
         self.waist_urdf_offset = float(np.pi - waist_driver_shift)
         self.robot = robot
         urdf = URDF.load(urdf_path)
         if COLLISION_MODEL == "sphere":
-            robot_coll = pruned_sphere_collision(urdf, _IK_STUDY / "results")
+            robot_coll = pruned_sphere_collision(urdf, _IK / "study" / "results")
         elif COLLISION_MODEL == "capsule":
             robot_coll = pruned_tight_capsule_collision(urdf)
             print("[study_ik] SOLVER COLLISION = CAPSULE (hardware trial). "
@@ -307,9 +334,9 @@ class CoupledStudyIK:
         self._waist_idx = robot.joints.actuated_names.index("middle_base")
         # Per-joint sign/offset over the FULL actuated set (identity elsewhere):
         #     driver = sign * urdf + offset   <=>   urdf = sign * (driver - offset)
-        # Calibrated 2026-08 by matching sim to the real arm's physical forward
-        # pose: shoulder and elbow axes are FLIPPED on the real assembly,
-        # camera roll/yaw carry mounting offsets.
+        # Normally the identity now -- the 2026-08 calibration lives in
+        # giava.urdf (see MIDDLE_OFFSETS_FILE above).  Kept so a freshly
+        # measured hardware offset can be applied without a URDF edit.
         n_act = robot.joints.num_actuated_joints
         self._joint_offsets = np.zeros(n_act, dtype=np.float32)
         self._joint_signs = np.ones(n_act, dtype=np.float32)
@@ -332,11 +359,11 @@ class CoupledStudyIK:
         table_coll, table_geom = None, None
         if TABLE_ENABLE:
             extras["table"] = TABLE_W
-            table_coll = table_robot_collision(urdf, _IK_STUDY / "results")
+            table_coll = table_robot_collision(urdf, _IK / "study" / "results")
             table_geom = table_halfspace(TABLE_Z)
-            print("[study_ik] TABLE COLLISION ENABLED -- UNVALIDATED "
-                  "(see ik_study/table_collision.py). Inspect in "
-                  "view_table_collision.py before trusting on hardware.")
+            print("[study_ik] TABLE COLLISION ENABLED -- hardware-validated "
+                  "2026-09-09 on the real arms; not swept "
+                  "(see ik/table_collision.py).")
         self._ik = ComboIK(
             robot,
             tuple(ee_links[a] for a in ARM_ORDER),
@@ -460,3 +487,42 @@ class CoupledStudyIK:
         self.last_solve_ms = res.solve_ms
         self.last_iterations = res.iterations
         return self.urdf_to_driver(res.q, ref_driver=prev_q)
+
+
+def build_study_ik(robot, control_dt: float = STUDY_DT,
+                   waist_driver_shift: float = 0.0,
+                   urdf_path: Optional[str] = None,
+                   max_iterations: int = MAX_ITERATIONS) -> "CoupledStudyIK":
+    """The deployed solver, built from arm_config — one call, no weights to pass.
+
+    This exists because "which weights?" is the question that produced three
+    different IK solvers in this directory, all of them called from teleop
+    loops, none of them agreeing.  Every weight the study validated lives in
+    the module constants above; the only things a caller legitimately knows are
+    its control period and the middle waist's Homing_Offset, so those are the
+    only things this takes.
+
+    ALWAYS ALL THREE ARMS, whatever mode the caller runs.  The self-collision
+    cost and the gates are statements about the robot, not about the arms one
+    session happens to drive: leaving an arm out of the problem does not make
+    it leave the workspace.  Arms with no target in a given tick hold the
+    configuration in `prev_q` (CoupledStudyIK.solve), so a single-arm caller
+    passes one target and gets collision avoidance against the other two for
+    free -- provided it seeded their joints with where they actually are.
+
+    Returns a CoupledStudyIK; call `.solve(prev_q, {arm: (pos, wxyz)})` with
+    DRIVER-coordinate joints, exactly as data_collection.py does."""
+    try:
+        from .arm_config import ARM_CONFIG as _AC
+        from .arm_config import URDF_PATH as _UP
+    except ImportError:
+        from arm_config import ARM_CONFIG as _AC
+        from arm_config import URDF_PATH as _UP
+    return CoupledStudyIK(
+        robot,
+        urdf_path or _UP,
+        ee_links={a: _AC[a]["ee_link"] for a in ARM_ORDER},
+        control_dt=control_dt,
+        max_iterations=max_iterations,
+        waist_driver_shift=waist_driver_shift,
+    )

@@ -21,7 +21,7 @@ Right-handed: x × y = z ✓.
 | arm | base link position (x, y, z) | base yaw | reading |
 |---|---|---|---|
 | right | (**−0.520**, −0.019, 0.020) | 0 | 0.520 m to the operator's **right** |
-| left | (**+0.520**, −0.019, 0.020) | **π (180°)** | 0.520 m to the operator's **left**, base frame *facing the right arm* |
+| left | (**+0.535**, −0.021, **0.045**) | **π − 0.24°** | 0.535 m to the operator's **left**, 25 mm higher than the right base, base frame *facing the right arm*. Touch-calibrated 2026-09-03 against the right arm (`calibration/touch_calibrate.py`, 15 tip-to-tip touches, 15 mm rms residual); it was the symmetric assumption (+0.520, −0.019, 0.020, π) before. |
 | middle | (0.000, **+0.400**, 0.020) | 0 | centered, 0.400 m **behind** the manipulator line (operator side) |
 
 So: the two manipulators face each other 1.040 m apart along x (measured

@@ -148,11 +148,12 @@ def select(argv: Optional[List[str]] = None) -> str:
 def select_table(argv: Optional[List[str]] = None) -> bool:
     """Read `--table on|off` (or GIAVA_TABLE) and apply it to os.environ.
 
-    Tabletop avoidance (ik_study/table_collision.py's soft cost + the
-    table_gate.py hard floor gate) is UNVALIDATED -- no sweep, no hardware
-    trial -- unlike the inter-arm collision modes above.  Both halves share
-    ONE switch here so the whole feature can be killed in one flag if it
-    misbehaves on hardware, instead of hunting two env vars mid-session.
+    Tabletop avoidance (ik/table_collision.py's soft cost + the
+    table_gate.py hard floor gate) was hardware-validated 2026-09-09 on the
+    real arms, though its margin has never been swept -- unlike the inter-arm
+    collision modes above.  Both halves share ONE switch here so the whole
+    feature can be killed in one flag if it misbehaves on hardware, instead
+    of hunting two env vars mid-session.
 
     MUST be called before study_ik or table_gate are imported: both read
     their configuration from the environment at module import."""
@@ -190,7 +191,7 @@ def banner(mode: str) -> str:
            f"{float(g.get('GIAVA_CAPSULE_GATE_MARGIN', '0.025')) * 1e3:.0f} mm"
            "   -- decides WHERE YOU STOP"),
         "-" * 74,
-        f"  Table (UNVALIDATED)  : "
+        f"  Table (hw-validated) : "
         + ("OFF -- nothing prevents the arms pressing into the table"
            if g.get("GIAVA_TABLE", "on") != "on" else
            f"soft cost + hard z-floor gate, margin "

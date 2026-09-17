@@ -1,0 +1,89 @@
+<launch>
+  <!-- Ports by STABLE udev symlink, never by enumeration order.
+       /dev/ttyUSB<N> is assigned in the order adapters appear, so any replug
+       or USB glitch renumbers every arm at once.  That happened (2026-08-26):
+       an adapter re-enumerated after roslaunch, ttyUSB0 vanished, everything
+       shifted up one, and the right arm's node was left holding a dead handle
+       -- it published -3.1416 rad on all seven joints with 34e6 rad/s
+       velocities until replay's safety check refused to move it.
+       The dangerous shuffle is the silent one: under the numbering at that
+       moment ttyUSB1 was the LEFT arm, and this file was telling the RIGHT
+       arm's node to open it.  Nothing downstream can detect commands landing
+       on the wrong servos.
+       99-interbotix-udev.rules already binds each adapter's FTDI serial
+       (FT8J0W5T / FT5NV8RB / FT89FDIZ) to a fixed name, so use those. -->
+  <!-- SIMULATION twin of 3arms_teleop.launch: the SAME xs_sdk driver nodes,
+       same topics, same python API — but with use_sim:=true, so joints track
+       commands without hardware.  Anything that runs against this (e.g.
+       teleop_debug_tool.py, data_collection.py) runs bit-identical command
+       paths on the real launch afterwards.
+
+       Arm selection (works the same on 3arms_teleop.launch):
+         roslaunch av_aloha 3arms_sim.launch                          # all three
+         roslaunch av_aloha 3arms_sim.launch use_middle:=false        # bimanual
+         roslaunch av_aloha 3arms_sim.launch use_right:=false use_middle:=false  # left only
+
+       Ports are passed for symmetry with the real launch; in sim the serial
+       port is never opened. -->
+
+  <arg name="use_left"   default="true"/>
+  <arg name="use_right"  default="true"/>
+  <arg name="use_middle" default="true"/>
+
+  <arg name="robot_model_puppet_left"   default="vx300s"/>
+  <arg name="robot_model_puppet_right"  default="vx300s"/>
+  <arg name="robot_model_puppet_middle" default="wx250s_7dof"/>
+  <arg name="base_link_puppet"          default="base_link"/>
+
+  <arg name="puppet_modes_left"   default="$(find av_aloha)/config/puppet_modes_left.yaml"/>
+  <arg name="puppet_modes_right"  default="$(find av_aloha)/config/puppet_modes_right.yaml"/>
+  <arg name="puppet_modes_middle" default="$(find av_aloha)/config/puppet_modes_middle.yaml"/>
+  <arg name="use_rviz"            default="true"/>
+
+  <include if="$(arg use_left)" file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
+    <arg name="robot_model"     value="$(arg robot_model_puppet_left)"/>
+    <arg name="robot_name"      value="puppet_left"/>
+    <arg name="base_link_frame" value="$(arg base_link_puppet)"/>
+    <arg name="use_world_frame" value="false"/>
+    <arg name="use_rviz"        value="false"/>
+    <arg name="mode_configs"    value="$(arg puppet_modes_left)"/>
+    <arg name="use_sim"         value="true"/>
+    <arg name="port"            value="/dev/ttyDXL_puppet_left"/>
+  </include>
+
+  <include if="$(arg use_right)" file="$(find interbotix_xsarm_control)/launch/xsarm_control.launch">
+    <arg name="robot_model"     value="$(arg robot_model_puppet_right)"/>
+    <arg name="robot_name"      value="puppet_right"/>
+    <arg name="base_link_frame" value="$(arg base_link_puppet)"/>
+    <arg name="use_world_frame" value="false"/>
+    <arg name="use_rviz"        value="false"/>
+    <arg name="mode_configs"    value="$(arg puppet_modes_right)"/>
+    <arg name="use_sim"         value="true"/>
+    <arg name="port"            value="/dev/ttyDXL_puppet_right"/>
+  </include>
+
+  <include if="$(arg use_middle)" file="$(find wx250s_7dof_description)/launch/xsarm_control.launch">
+    <arg name="robot_model"     value="$(arg robot_model_puppet_middle)"/>
+    <arg name="robot_name"      value="puppet_middle"/>
+    <arg name="base_link_frame" value="$(arg base_link_puppet)"/>
+    <arg name="use_world_frame" value="false"/>
+    <arg name="use_rviz"        value="false"/>
+    <arg name="mode_configs"    value="$(arg puppet_modes_middle)"/>
+    <arg name="use_sim"         value="true"/>
+    <arg name="port"            value="/dev/ttyDXL_puppet_middle"/>
+    <arg name="load_configs"    value="false"/>
+  </include>
+
+  <node if="$(arg use_left)" name="puppet_left_transform_broadcaster" pkg="tf2_ros"
+        type="static_transform_publisher"
+        args="0.545 0.469 0 -1.57 0 0 /world /puppet_left/base_link"/>
+  <node if="$(arg use_right)" name="puppet_right_transform_broadcaster" pkg="tf2_ros"
+        type="static_transform_publisher"
+        args="0.545 -0.469 0 1.57 0 0 /world /puppet_right/base_link"/>
+  <node if="$(arg use_middle)" name="puppet_middle_transform_broadcaster" pkg="tf2_ros"
+        type="static_transform_publisher"
+        args="0 0 0 0 0 0 /world /puppet_middle/base_link"/>
+
+  <node if="$(arg use_rviz)" name="rviz" pkg="rviz" type="rviz"
+        args="-d $(find av_aloha)/3arms_teleop.rviz"/>
+</launch>

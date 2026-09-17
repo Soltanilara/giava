@@ -4,6 +4,8 @@ Code to configure and control Interbotix grippers, including:
  - Current-limit setup
  - Trigger-based gripper command
 """
+import os
+
 try:
     import rospy
 except ImportError:
@@ -72,6 +74,86 @@ def configure_gripper(bot, robot_name):
 # Open or close the gripper based on trigger state.
 def update_gripper(bot, trigger_pressed, close_position=GRIPPER_CLOSED, open_position=GRIPPER_OPEN):
     position = close_position if trigger_pressed else open_position
+    command_gripper(bot, position)
+    return position
+
+
+## ---------------------------------------------------------------------------
+## CONTINUOUS (ANALOG) GRIPPER
+##
+## The index trigger is an analog axis (0..1) but the historical mapping
+## thresholded it at zero: any deflection = full close.  That throws away the
+## aperture channel entirely -- the recorded gripper action is binary, so a
+## policy trained on it can never learn a gentle or partial grasp.
+##
+##   GIAVA_GRIPPER_MODE=binary   (default) the historical behaviour, unchanged
+##   GIAVA_GRIPPER_MODE=analog   trigger deflection maps linearly to aperture
+##
+## The analog map, and why each piece exists:
+##
+##   deadzone (bottom GIAVA_GRIPPER_DEADZONE of travel, default 0.08)
+##       resting a finger on the trigger reads a few percent; without a
+##       deadzone the gripper never fully opens.
+##   saturation (top of travel above GIAVA_GRIPPER_LATCH, default 0.85)
+##       holding a trigger at an exact deflection is hard; holding it FULLY
+##       pulled is easy.  Everything above the latch point is full close, so a
+##       firm grip -- commanded past the object's width, which is what
+##       produces grip force in current_based_position mode -- costs no
+##       precision.  Between deadzone and latch the map is linear, so partial
+##       apertures live in the comfortable middle of the trigger's travel.
+##   EMA (GIAVA_GRIPPER_ALPHA, default 0.4)
+##       trigger jitter at 25-50 Hz otherwise becomes gripper chatter.  The
+##       smoothed COMMAND is also the recorded action, so what the dataset
+##       stores is exactly what the servo was asked to do.
+##
+## The return value is the commanded position (same contract as
+## update_gripper), which data_collection.py records as the action.
+GRIPPER_MODE = os.environ.get("GIAVA_GRIPPER_MODE", "binary").strip().lower()
+GRIPPER_ANALOG_DEADZONE = float(os.environ.get("GIAVA_GRIPPER_DEADZONE", "0.08"))
+GRIPPER_ANALOG_LATCH = float(os.environ.get("GIAVA_GRIPPER_LATCH", "0.85"))
+GRIPPER_ANALOG_ALPHA = float(os.environ.get("GIAVA_GRIPPER_ALPHA", "0.4"))
+
+## Smoothed command per gripper, keyed by id(bot).
+_analog_cmd = {}
+
+
+def analog_trigger_to_position(trigger_value,
+                               close_position=GRIPPER_CLOSED,
+                               open_position=GRIPPER_OPEN):
+    """Map raw trigger deflection (0..1) to a gripper position command."""
+    t = min(max(float(trigger_value), 0.0), 1.0)
+    if t <= GRIPPER_ANALOG_DEADZONE:
+        return open_position
+    if t >= GRIPPER_ANALOG_LATCH:
+        return close_position
+    frac = (t - GRIPPER_ANALOG_DEADZONE) / (GRIPPER_ANALOG_LATCH - GRIPPER_ANALOG_DEADZONE)
+    return open_position + frac * (close_position - open_position)
+
+
+def update_gripper_from_trigger(bot, trigger_value,
+                                close_position=GRIPPER_CLOSED,
+                                open_position=GRIPPER_OPEN):
+    """One gripper tick from a raw analog trigger value (0..1).
+
+    Dispatches on GIAVA_GRIPPER_MODE so existing sessions keep the binary
+    behaviour bit-for-bit unless analog is asked for explicitly.
+    """
+    if GRIPPER_MODE != "analog":
+        return update_gripper(bot, trigger_value > 0,
+                              close_position=close_position,
+                              open_position=open_position)
+
+    target = analog_trigger_to_position(trigger_value, close_position, open_position)
+    key = id(bot)
+    prev = _analog_cmd.get(key, open_position)
+    position = GRIPPER_ANALOG_ALPHA * target + (1.0 - GRIPPER_ANALOG_ALPHA) * prev
+    ## Snap when within a whisker of either end so "fully open"/"fully closed"
+    ## are actually reached instead of asymptotically approached.
+    if abs(position - open_position) < 0.01:
+        position = open_position
+    elif abs(position - close_position) < 0.01:
+        position = close_position
+    _analog_cmd[key] = position
     command_gripper(bot, position)
     return position
 

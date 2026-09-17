@@ -2,10 +2,12 @@ import numpy as np
 import rospy
 
 import argparse
+import sys
 
+from arm_config import ARM_CONFIG
 from robot_control import (
     create_and_configure_robots,
-    interpolate_to_pose,
+    move_arms_together,
     get_pose,
 )
 
@@ -21,6 +23,12 @@ def parse_args():
         "--mode",
         choices=["left", "right", "middle", "bimanual", "all", "av"],
         default="right",
+    )
+
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="skip the live-session check and move anyway",
     )
 
     group.add_argument(
@@ -49,6 +57,45 @@ def parse_args():
 
     return parser.parse_args()
 
+def _abort_if_actively_driven(arm_names, window_s=0.5):
+    """Refuse to move an arm a live control loop is streaming commands to.
+
+    teleop / data_collection publish JointGroupCommand at ~50 Hz while a
+    drive session is ACTIVE, and publish NOTHING while idle (the arms just
+    hold on servo torque) -- so half a second of listening cleanly separates
+    the two.  Moving an arm out from under an active stream makes two nodes
+    fight at 50 Hz: the arm judders between targets and snaps to whichever
+    publisher wins the last tick.  Resetting an arm mid-session is never
+    that; make the operator release the drive button first.
+
+    An IDLE session is fine to move under: its next enable runs the
+    stale-command check and re-anchors from measured joints (see
+    command_state_is_stale / sync_robot_state).
+    """
+    from interbotix_xs_msgs.msg import JointGroupCommand
+
+    live = set()
+    subs = [
+        rospy.Subscriber(
+            f"/{ARM_CONFIG[a]['robot_name']}/commands/joint_group",
+            JointGroupCommand,
+            lambda _msg, a=a: live.add(a),
+        )
+        for a in arm_names
+    ]
+    rospy.sleep(window_s)
+    for s in subs:
+        s.unregister()
+    if live:
+        sys.exit(
+            f"[move_arms] REFUSING to move {', '.join(sorted(live))}: a control "
+            f"loop is actively streaming commands to it (seen on its "
+            f"joint_group topic within {window_s:.1f}s).\n"
+            "Release the drive button so the arms are idle -- or stop the "
+            "session -- then re-run.  --force overrides."
+        )
+
+
 def main():
     rospy.init_node("move_arm", anonymous=True)
 
@@ -71,7 +118,10 @@ def main():
 
     arm_names = ARM_MODES[args.mode]
 
-    # print(f"Read arm names: {arm_names}")
+    if not args.force:
+        _abort_if_actively_driven(arm_names)
+
+    print(f"Creating and configuring the arms.")
 
     robots = create_and_configure_robots(arm_names)
 
@@ -84,13 +134,16 @@ def main():
 
     # print(f"Moving {args.mode} arms to pose '{pose_name}'")
 
-    for i, arm_name in enumerate(arm_names):
-        interpolate_to_pose(
-            robots[arm_name],
-            arm_name,
-            get_pose(arm_name, pose_name),
-            blocking=(i == len(arm_names) - 1),
-        )
+    ## One shared trapezoid for every arm, and it BLOCKS until the arms have
+    ## measurably settled.  The old per-arm loop ran every arm but the last
+    ## on a daemon thread (interpolate_to_pose(blocking=False)) and blocked
+    ## only on the last one -- so when the last arm (often the SHORTEST
+    ## move) settled, main() returned, the process exited, and the daemon
+    ## streams died mid-flight.  Each surviving goal register held a
+    ## mid-trajectory setpoint, which is exactly the observed "move_arms
+    ## stops before completing the motion" on multi-arm modes.
+    move_arms_together(
+        robots, {a: get_pose(a, pose_name) for a in arm_names})
 
 if __name__ == "__main__":
     main()
