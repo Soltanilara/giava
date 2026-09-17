@@ -1,6 +1,14 @@
 [submodule "gym_av_aloha"]
 	path = gym_av_aloha
-	url = https://github.com/Soltanilara/gym_av_aloha
+	url = https://github.com/deviamar/gym_av_aloha.git
 [submodule "pyroki"]
 	path = pyroki
-	url = https://github.com/chungmin99/pyroki
+	url = https://github.com/deviamar/pyroki.git
+[submodule "lerobot"]
+	path = lerobot
+	url = https://github.com/deviamar/lerobot.git
+	branch = giava-v0.6.0
+[submodule "curobo"]
+	path = curobo
+	url = https://github.com/deviamar/curobo.git
+	branch = giava-main
