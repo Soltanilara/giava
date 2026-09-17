@@ -1,0 +1,170 @@
+{
+ "left_base_link": {
+  "hull_leak_m": 0.005223386634073327,
+  "capsule_leak_m": 0.004066103879266696,
+  "n_hulls": 8,
+  "n_points": 26001
+ },
+ "left_gripper_base": {
+  "hull_leak_m": 0.002142936728678449,
+  "capsule_leak_m": 0.0016982016428317218,
+  "n_hulls": 8,
+  "n_points": 71644
+ },
+ "left_left_finger_link": {
+  "hull_leak_m": 0.0014674768637538372,
+  "capsule_leak_m": 0.0,
+  "n_hulls": 8,
+  "n_points": 40215
+ },
+ "left_lower_forearm_link": {
+  "hull_leak_m": 0.0012266029553978286,
+  "capsule_leak_m": 0.0009787933128330567,
+  "n_hulls": 8,
+  "n_points": 26006
+ },
+ "left_right_finger_link": {
+  "hull_leak_m": 0.0017104850358727122,
+  "capsule_leak_m": 0.00014520472474305497,
+  "n_hulls": 8,
+  "n_points": 40278
+ },
+ "left_shoulder_link": {
+  "hull_leak_m": 0.001317535742306406,
+  "capsule_leak_m": 0.001179398317655997,
+  "n_hulls": 8,
+  "n_points": 25640
+ },
+ "left_upper_arm_link": {
+  "hull_leak_m": 0.004486789503925047,
+  "capsule_leak_m": 0.0018201811318641348,
+  "n_hulls": 8,
+  "n_points": 26035
+ },
+ "left_upper_forearm_link": {
+  "hull_leak_m": 0.0025985656913496947,
+  "capsule_leak_m": 0.0013862617689993917,
+  "n_hulls": 8,
+  "n_points": 25497
+ },
+ "left_wrist_link": {
+  "hull_leak_m": 0.0010661652947691594,
+  "capsule_leak_m": 0.0006026724509715742,
+  "n_hulls": 8,
+  "n_points": 25711
+ },
+ "middle_base_link": {
+  "hull_leak_m": 0.0037132506860644908,
+  "capsule_leak_m": 0.0020618688855090946,
+  "n_hulls": 8,
+  "n_points": 26171
+ },
+ "middle_camera": {
+  "hull_leak_m": 0.0007723149141726973,
+  "capsule_leak_m": 0.0002978279221896203,
+  "n_hulls": 8,
+  "n_points": 26166
+ },
+ "middle_camera_body": {
+  "hull_leak_m": 0.0008470963023133654,
+  "capsule_leak_m": 0.0,
+  "n_hulls": 8,
+  "n_points": 25843
+ },
+ "middle_camera_cover": {
+  "hull_leak_m": 9.998979369166134e-05,
+  "capsule_leak_m": 0.0,
+  "n_hulls": 8,
+  "n_points": 25600
+ },
+ "middle_lower_forearm_link": {
+  "hull_leak_m": 0.001931999532098033,
+  "capsule_leak_m": 0.0005478606805272082,
+  "n_hulls": 8,
+  "n_points": 26995
+ },
+ "middle_pan_link": {
+  "hull_leak_m": 0.0005562844221720458,
+  "capsule_leak_m": 0.00020076091716836678,
+  "n_hulls": 8,
+  "n_points": 36040
+ },
+ "middle_shoulder_link": {
+  "hull_leak_m": 0.0010889138180875753,
+  "capsule_leak_m": 0.0008463068758718766,
+  "n_hulls": 8,
+  "n_points": 25886
+ },
+ "middle_upper_arm_link": {
+  "hull_leak_m": 0.004327650989100326,
+  "capsule_leak_m": 0.0003659457342926019,
+  "n_hulls": 8,
+  "n_points": 25890
+ },
+ "middle_upper_forearm_link": {
+  "hull_leak_m": 0.0028233617494646045,
+  "capsule_leak_m": 0.0012794918097391757,
+  "n_hulls": 8,
+  "n_points": 25928
+ },
+ "middle_wrist_link": {
+  "hull_leak_m": 0.0009323595846596313,
+  "capsule_leak_m": 0.0,
+  "n_hulls": 8,
+  "n_points": 27917
+ },
+ "right_base_link": {
+  "hull_leak_m": 0.005223386634073327,
+  "capsule_leak_m": 0.0045765998251674,
+  "n_hulls": 8,
+  "n_points": 26001
+ },
+ "right_gripper_base": {
+  "hull_leak_m": 0.002142936728678449,
+  "capsule_leak_m": 0.001545054415112844,
+  "n_hulls": 8,
+  "n_points": 71644
+ },
+ "right_left_finger_link": {
+  "hull_leak_m": 0.0013691538926235403,
+  "capsule_leak_m": 0.0,
+  "n_hulls": 8,
+  "n_points": 40215
+ },
+ "right_lower_forearm_link": {
+  "hull_leak_m": 0.0012789850176821002,
+  "capsule_leak_m": 0.0009863872901594746,
+  "n_hulls": 8,
+  "n_points": 26006
+ },
+ "right_right_finger_link": {
+  "hull_leak_m": 0.0017363221378039505,
+  "capsule_leak_m": 0.00014719045366581515,
+  "n_hulls": 8,
+  "n_points": 40278
+ },
+ "right_shoulder_link": {
+  "hull_leak_m": 0.001317535742306406,
+  "capsule_leak_m": 0.0011791049333289526,
+  "n_hulls": 8,
+  "n_points": 25640
+ },
+ "right_upper_arm_link": {
+  "hull_leak_m": 0.004486789503925047,
+  "capsule_leak_m": 0.0018216218618304116,
+  "n_hulls": 8,
+  "n_points": 26035
+ },
+ "right_upper_forearm_link": {
+  "hull_leak_m": 0.002591896080233819,
+  "capsule_leak_m": 0.001390789305664275,
+  "n_hulls": 8,
+  "n_points": 25497
+ },
+ "right_wrist_link": {
+  "hull_leak_m": 0.0010661652947691594,
+  "capsule_leak_m": 0.000603824366399378,
+  "n_hulls": 8,
+  "n_points": 25711
+ }
+}

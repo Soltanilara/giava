@@ -1,0 +1,61 @@
+{
+  "_README": [
+    "MEASURED tool centre point offsets, per arm.",
+    "",
+    "T_flange_tcp: maps points from the TCP frame into the flange frame",
+    "(*_gripper_base), i.e. it IS the pose of the TCP expressed in the flange.",
+    "Metres.",
+    "",
+    "WHY THIS MATTERS",
+    "  Everything in GIAVA -- IK targets, FK output, dataset ee_pose -- refers to",
+    "  *_gripper_base, the gripper MOUNTING PLATE. The point between the fingers",
+    "  is roughly 72 mm further along that plate's LOCAL +z (the approach axis).",
+    "",
+    "  So the world z of the fingertips is NOT the world z of gripper_base, and",
+    "  the difference depends on wrist orientation: the full ~72 mm when the",
+    "  gripper points straight down, zero when it points horizontally.",
+    "",
+    "  It also means a commanded translation of the PLATE does not translate the",
+    "  FINGERS equally unless orientation holds exactly. At a 72 mm lever, a",
+    "  10 deg tilt moves the fingertips 12.5 mm.",
+    "",
+    "THE BUILT-IN DEFAULT IS DERIVED, NOT MEASURED",
+    "  (0, 0.00006, 0.0722) m, from the upstream interbotix vx300s",
+    "  ee_gripper_link that giava.urdf dropped when it was flattened. It assumes",
+    "  GIAVA's custom fingers (vx300s_8_custom_finger_*.stl) grasp where the",
+    "  stock ones did. Nothing has checked that.",
+    "",
+    "HOW TO MEASURE IT",
+    "  1. Put the arm somewhere you can reach, gripper roughly horizontal so the",
+    "     offset lies in the horizontal plane and is easy to measure.",
+    "  2. Note where the fingers actually close on an object.",
+    "  3. Run  python calibration/frame_report.py  to get the flange pose, and",
+    "     work out the offset in the FLANGE's local axes:",
+    "        local +z = approach axis, wrist -> fingertips",
+    "        local +-x = the direction the fingers open and close",
+    "        local +y = palm normal",
+    "  4. Fill in translation_xyz_m below and set measured: true.",
+    "",
+    "  rpy_rad is optional and defaults to zero -- i.e. the TCP keeps the",
+    "  flange's orientation and only its origin moves. Give a rotation only if",
+    "  you want the TCP frame's axes to differ from the flange's."
+  ],
+
+  "_SCHEMA": {
+    "translation_xyz_m": "TCP origin in the flange frame, metres",
+    "rpy_rad": "optional TCP orientation relative to the flange (default 0,0,0)",
+    "provenance": "how it was obtained, e.g. 'measured:ruler_2026-08-20'",
+    "measured": "true only once a physical measurement backs it",
+    "note": "free text: who, when, which fingers were fitted"
+  },
+
+  "_EXAMPLE_DO_NOT_USE": {
+    "translation_xyz_m": [0.0, 0.0, 0.0722],
+    "rpy_rad": [0.0, 0.0, 0.0],
+    "provenance": "measured:example",
+    "measured": false,
+    "note": "Shape only. Keys starting with '_' are ignored by the loader."
+  },
+
+  "arms": {}
+}
