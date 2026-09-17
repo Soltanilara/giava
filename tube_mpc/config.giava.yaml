@@ -1,0 +1,32 @@
+urdf_path: /home/devi/giava/giava.urdf
+joint_prefix: right_
+dt: 0.02
+a_max: 30.0
+command_mode: position
+w_q:
+- 0.004169
+- 0.003662
+- 0.004435
+- 0.003833
+- 0.004579
+- 0.00444
+w_v:
+- 0.063782
+- 0.044496
+- 0.081075
+- 0.071336
+- 0.037577
+- 0.068934
+horizon: 25
+q_weight: 50.0
+v_weight: 0.1
+u_weight: 0.01
+u_human_weight: 0.0
+lqr_q: 10.0
+lqr_r: 1.0
+alpha_target: 0.05
+q_backoff: 0.002
+v_backoff: 0.005
+ref_decay: 0.95
+ref_v_cap: 1.0
+ref_jump_rad: 0.1

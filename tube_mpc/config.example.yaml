@@ -1,0 +1,37 @@
+# tube_mpc machine config -- copy to e.g. config.lab.yaml and edit.
+# Everything machine-specific lives here; the code is identical everywhere.
+
+# ---- plant / timing: MUST match the machine you run on -------------------
+urdf_path: giava.urdf        # path to that machine's URDF
+joint_prefix: right_         # which arm's joints to filter
+dt: 0.02                     # YOUR teleop loop period (s) -- measure it
+a_max: 12.0                  # rad/s^2 -- identify from logs or servo specs
+command_mode: position       # position | velocity | acceleration
+                             # This is your DRIVER'S COMMAND INTERFACE -- what
+                             # send() actually publishes. It is NOT the servo
+                             # profile type: interbotix arms in
+                             # operating_mode: position with
+                             # profile_type: velocity take POSITION goals, so
+                             # they are command_mode: position.
+
+# ---- disturbance box: calibrate with tube_mpc.calibrate_w, don't guess ---
+# scalars broadcast to all joints; calibration writes per-joint lists here
+w_q: 0.002                   # rad
+w_v: 0.01                    # rad/s
+
+# ---- MPC tuning: portable defaults ---------------------------------------
+horizon: 25
+q_weight: 50.0
+v_weight: 0.1
+u_weight: 0.01
+u_human_weight: 0.0
+lqr_q: 10.0
+lqr_r: 1.0
+alpha_target: 0.05
+q_backoff: 0.002
+v_backoff: 0.005
+
+# ---- reference extrapolation ---------------------------------------------
+ref_decay: 0.85
+ref_v_cap: 1.0                 # rad/s: extrapolate at hand speed, never servo speed
+ref_jump_rad: 0.1              # a >0.1 rad single-tick target change is a jump: hold, don't extrapolate

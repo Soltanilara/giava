@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tube-mpc"
+version = "0.1.0"
+description = "Tube-MPC reference filter for constraint-aware robot teleoperation"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "osqp>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+demo = ["matplotlib>=3.7"]
+test = ["pytest>=7"]
+
+# The package directory is this folder itself (flat layout at repo root):
+# from the PARENT directory, `pip install -e ./tube_mpc` installs `tube_mpc`.
+[tool.setuptools]
+packages = ["tube_mpc", "tube_mpc.tests"]
+
+[tool.setuptools.package-dir]
+tube_mpc = "."
+"tube_mpc.tests" = "tests"
+
+[tool.setuptools.package-data]
+tube_mpc = ["config.example.yaml", "MATH.md", "README.md"]

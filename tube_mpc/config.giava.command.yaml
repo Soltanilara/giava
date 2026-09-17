@@ -1,0 +1,62 @@
+# tube_mpc config for COMMAND-MODE operation on the GIAVA rig.
+#
+# WHY THIS IS A SEPARATE FILE FROM config.giava.yaml
+# ===================================================
+# The two files differ ONLY in w_q / w_v, and they differ because they
+# describe two different loops.
+#
+#   config.giava.yaml         W measured by calibrate_w from the MEASURED
+#                             stream: w = x_meas[k+1] - (A x_meas[k] + B u_cmd[k]).
+#                             That is the residual of the SERVO, and it is the
+#                             right W for state_source=measured, the textbook
+#                             tube.  Keep it; do not delete it.
+#
+#   this file                 state_source=command, where x_k is the filter's
+#                             OWN last planned state -- a virtual double
+#                             integrator driven by the command stream.  That
+#                             plant is exactly LTI with w = 0, so the servo's
+#                             tracking error is OUTSIDE the loop by
+#                             construction and must not be paid for inside it.
+#
+# WHAT WENT WRONG WHEN THEY WERE MIXED (2026-09-09)
+# =================================================
+# Calibrating on the real right arm gave w_v = 0.038-0.081 rad/s, inflated by
+# 280 ms of command->encoder lag on wrist_angle (14 ticks, measured by
+# tube_mpc_bench).  Installed in a command-mode loop, the readiness check
+# still said READY but reported a worst terminal margin of 1.6384 rad --
+# 94.3% of the narrowest joint's range, leaving ~6% usable.  The filter was
+# reserving nearly the whole workspace against a disturbance that, in that
+# loop, does not occur.  For comparison the same check on this file's W
+# reports 0.2969 rad, 18.5%.
+#
+# WHAT W MEANS HERE
+# =================
+# Not zero, because the virtual plant is not perfectly followed either: the
+# command the filter plans is edited after it by the driver clamp, the stall
+# hold, and the waist travel limit, and the plan is re-anchored on teleop
+# enable and after a rejected command.  These values are the shipped
+# defaults, at solver-tolerance scale (compare q_backoff ~2 mrad).  They are
+# a floor, not a measurement -- calibrating them honestly would mean logging
+# the filter's PLANNED command against what data_collection actually sent,
+# which calibrate_w does not currently do.
+#
+urdf_path: /home/devi/giava/giava.urdf
+joint_prefix: right_
+dt: 0.02
+a_max: 30.0
+command_mode: position
+w_q: 0.002
+w_v: 0.01
+horizon: 25
+q_weight: 50.0
+v_weight: 0.1
+u_weight: 0.01
+u_human_weight: 0.0
+lqr_q: 10.0
+lqr_r: 1.0
+alpha_target: 0.05
+q_backoff: 0.002
+v_backoff: 0.005
+ref_decay: 0.95
+ref_v_cap: 1.0
+ref_jump_rad: 0.1
