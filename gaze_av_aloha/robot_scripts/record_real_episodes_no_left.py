@@ -4,7 +4,7 @@ from gym_av_aloha.vr.headset import WebRTCHeadset
 from gym_av_aloha.vr.headset_control_no_left import HeadsetControl
 from gym_av_aloha.vr.headset_utils import HeadsetFeedback
 from gaze_av_aloha.robot.env_no_left import RealEnv
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 import time
 import os
 from gym_av_aloha.utils.dataset_utils import interpolate_data

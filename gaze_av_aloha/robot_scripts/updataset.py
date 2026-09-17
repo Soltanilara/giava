@@ -1,5 +1,5 @@
 import os
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 def upload_to_hub(repo_id: str, dataset_root: str):
     dataset_path="/home/jinyu/GitHub/gaze-av-aloha/gaze_av_aloha/robot_scripts/outputs_jy/iantc105/av_aloha_place_tube"
