@@ -1,5 +1,54 @@
 port: /dev/ttyDXL_puppet_middle
 
+# Changed mode to torque on and hold pose upon launch, mirroring the behavior of left and right arms
 groups:
   arm:
-    torque_enable: false
+    operating_mode: position
+    profile_type: velocity
+    profile_velocity: 0
+    profile_acceleration: 0
+    torque_enable: true
+
+# HISTORY.  The middle arm was originally reassembled with the waist motor clocked so that the
+# rest pose sat essentially ON the encoder seam (driver ~+3.13 rad = tick 4090, six ticks off the
+# 0/4096 wrap).  Boot readings therefore flipped between +pi and -pi -- a 2*pi branch flip that
+# split the shape_sorter dataset in half -- and 8 of the 9 recorded middle-arm faults were the
+# waist, every one within 0.2 rad of the seam, twice at 2095-2289 mA against a ~2300 mA latch.
+# EXTENDED POSITION mode was the workaround: it lets the goal space run past +/-pi so the joint
+# can cross the seam without unwinding a full turn.
+#
+# 2026-09-11: the motor was physically re-clocked, moving rest to ~0 rad (tick 2048), 175 deg
+# from the seam.  ext_position is kept for now -- it is harmless once the seam is out of the
+# working range -- but plain `position` mode is now viable and would be an improvement: it
+# restores the servo's own Max/Min_Position_Limit enforcement (NOT applied in ext_position, so
+# today nothing in firmware stops this joint being driven into its mechanical stop) and
+# re-enables Homing_Offset, which ext_position ignores.  Measured working arcs clear the seam by
+# >110 deg after the re-clock, so there is ample margin.  Change deliberately, and set the
+# position limits when you do.
+
+# The camera_yaw motor stays in EXTENDED POSITION mode because its requested upper bound is past
+# the single-turn +pi limit, making it unreachable in plain position mode.
+
+singles:
+  camera_yaw:
+    operating_mode: ext_position
+    profile_type: time
+    profile_velocity: 200
+    profile_acceleration: 100
+    torque_enable: true
+  # PROFILE MATCHES THE ARM GROUP (velocity-based, no profile cap), which is what every other
+  # joint on this arm runs.  It used to be `time` with profile_velocity: 200, and that mismatch
+  # was a real hazard, not a cosmetic one: Drive_Mode bit 2 decides whether Profile_Velocity is
+  # a DURATION or a SPEED CAP, servo_health.profile_limits derives the group's clamp from the
+  # velocity-based joints, and GIAVA_PROFILE_MODE=auto could report either answer for this arm
+  # depending on driver joint ordering.  Note the unit change: 200 meant 200 ms under a
+  # time-based profile; under a velocity-based one it would have meant 200 * 0.229 rev/min =
+  # 4.79 rad/s, FASTER than the 3.36 rad/s the rest of the arm is clamped against.  0 means no
+  # profile at all (max speed), identical to shoulder/elbow/wrist_angle/camera_roll -- the real
+  # governor is cfg.driver_max_step in the control loop, not the servo profile.
+  waist:
+    operating_mode: ext_position
+    profile_type: velocity
+    profile_velocity: 0
+    profile_acceleration: 0
+    torque_enable: true
