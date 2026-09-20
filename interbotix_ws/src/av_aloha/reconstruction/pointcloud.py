@@ -47,26 +47,37 @@ this module reports COVERAGE (how many pixels survived each filter) rather
 than an error bar it cannot compute.  If you need a number you can quote,
 measure it with `measure.py`; if you need to see the scene, use this.
 
-WHICH CAMERA TO POINT AT THE TABLE  (measured 2026-09-20, not guessed)
-======================================================================
-The D405 is a SHORT range sensor: Intel spec it from 7 cm to about 50 cm,
-and its depth error grows with the square of distance.  `top_scene` sits
-**86 cm** above the table, well outside that, and it shows:
+HOW GOOD IS THE DEPTH, REALLY  (measured 2026-09-20, twice)
+===========================================================
+`top_scene` sits 86 cm above the table and the D405 is spec'd 7-50 cm, so
+the first guess was that its noise swamps everything.  The residual
+against a fitted PLANE is indeed large.  But a residual is not a noise
+measurement, and treating it as one is how you end up blaming a sensor
+for your own model.  The honest test is to capture the scene TWICE and
+difference the two:
 
-    residual RMS against the fitted table plane      19.2 mm
-    near-plane points more than 15 mm off the plane  41.3 %
+    trial-to-trial difference                 8.1 mm
+      => genuine random noise per capture     ~5.7 mm  (8.1 / sqrt 2)
+    correlation between the two residuals     0.993
 
-At that noise floor nothing shorter than roughly 3 sigma -- about **58 mm**
--- can be told apart from the table it is sitting on, and DBSCAN duly
-turns the noise ripple on the bare wood into dozens of "objects".  This is
-a sensor-placement fact, not a parameter to tune around: no `--eps` makes
-a 19 mm noise floor resolve a 20 mm block.
+Over 99% of the departure from flat REPEATS.  It is not noise; it is the
+table's own plank structure plus whatever bow the depth field carries at
+this range, and it is therefore modelable.  Three consequences:
 
-So:
-  * small objects (sorter pieces, blocks)  -> use a WRIST camera, brought
-    to 15-30 cm over the table.  Same sensor, in spec, ~1-2 mm noise.
-  * whole-table layout, big objects        -> `top_scene` is fine, with
-    `--plane-tol 0.015` and only trusting clusters over ~60 mm tall.
+  * the useful resolution limit is ~3 sigma of the RANDOM part, about
+    17 mm -- not the 58 mm the plane residual appears to imply.  Sorter
+    pieces at 30-40 mm are well inside that.
+  * librealsense's spatial + temporal filters barely help (19.5 -> 18.9 mm
+    measured, both on and off).  Of course they do not: smoothing attacks
+    random noise, and the problem is not random.
+  * fitting a CURVED table (--surface-order, default 3) is what actually
+    works, because it removes the repeatable part instead of smoothing it.
+
+Camera choice still matters, just for different reasons:
+  * `top_scene` is the tabletop-mapping camera: overhead, whole table.
+  * a WRIST camera at 15-30 cm is in spec and much sharper, and is the
+    right answer when you need small pieces resolved precisely -- at the
+    cost of seeing only part of the table, and needing an arm posed.
   * `low_scene` is a grazing view from table level.  Grazing angles are
     the worst case for stereo depth; it is not a tabletop-mapping camera.
 
@@ -91,7 +102,9 @@ THE PIPELINE, AND WHY EACH STAGE IS THERE
   6. RANSAC plane               the table is the single biggest plane in
                                 view; find it explicitly rather than
                                 assuming z or y is "up"
-  7. cluster                    what is left, grouped into objects
+  7. polynomial surface         bend that plane onto the table's real,
+                                measured shape -- see fit_surface
+  8. cluster                    what stands proud of it, grouped
 
 Nothing here writes a calibration, consistent with the rest of the package.
 """
@@ -129,13 +142,22 @@ DEFAULT_OUT = _HERE / "outputs"
 ## ------------------------------------------------------------------ ##
 
 def grab_frames(serial: str, n_median: int, warmup: int,
-                width: int, height: int, fps: int):
+                width: int, height: int, fps: int, filters: bool = True):
     """Open one RealSense and return (depth_m, color_rgb, intrinsics).
 
     Depth is the per-pixel MEDIAN of `n_median` frames, already aligned to
     the colour stream.  Zeros mean "no reading" and are preserved as zeros
     rather than being interpolated -- an invented depth is indistinguishable
     from a real one downstream, which is exactly the failure this avoids.
+
+    `filters` runs librealsense's spatial and temporal post-processing in
+    disparity space (stereo error is roughly uniform in disparity but
+    grows as depth squared in metres, so disparity is the honest place to
+    smooth).  MEASURED EFFECT AT 86 cm: 19.5 -> 18.9 mm plane residual --
+    almost nothing, because at this range the residual is dominated by
+    repeatable structure rather than random noise, and smoothing does not
+    touch that.  Left on because it is cheap and does help genuinely noisy
+    close-range captures; turn it off with --no-filters to compare.
     """
     import pyrealsense2 as rs
 
@@ -156,6 +178,14 @@ def grab_frames(serial: str, n_median: int, warmup: int,
         for _ in range(warmup):
             pipeline.wait_for_frames()
 
+        to_disparity = rs.disparity_transform(True)
+        to_depth = rs.disparity_transform(False)
+        spatial = rs.spatial_filter()
+        spatial.set_option(rs.option.filter_magnitude, 2)
+        spatial.set_option(rs.option.filter_smooth_alpha, 0.5)
+        spatial.set_option(rs.option.filter_smooth_delta, 20)
+        temporal = rs.temporal_filter()
+
         depth_stack, color = [], None
         for _ in range(n_median):
             frames = align.process(pipeline.wait_for_frames())
@@ -163,6 +193,14 @@ def grab_frames(serial: str, n_median: int, warmup: int,
             c = frames.get_color_frame()
             if not d or not c:
                 continue
+            if filters:
+                ## The temporal filter carries state between calls, so it
+                ## must see the frames in sequence -- which is why this
+                ## runs inside the grab loop rather than over the stack.
+                d = to_disparity.process(d)
+                d = spatial.process(d)
+                d = temporal.process(d)
+                d = to_depth.process(d)
             depth_stack.append(np.asanyarray(d.get_data()))
             color = np.asanyarray(c.get_data())
 
@@ -343,6 +381,58 @@ def table_footprint(points: np.ndarray, table_mask: np.ndarray,
     return inside, extent
 
 
+def fit_surface(points: np.ndarray, table_mask: np.ndarray,
+                normal: np.ndarray, d: float, order: int, tol: float,
+                passes: int = 3):
+    """Bend the table model to the table's real shape.
+
+    WHY A PLANE IS NOT ENOUGH, MEASURED RATHER THAN ASSUMED.  Capturing
+    `top_scene` twice and differencing gave a trial-to-trial spread of
+    8.1 mm -- so ~5.7 mm of genuine random noise per capture -- while the
+    residual against a fitted PLANE was several times that and correlated
+    0.993 between captures.  Over 99% of the departure from flat is
+    therefore FIXED: the table's own plank structure plus whatever bow the
+    depth field has at this range.  It repeats, so it can be modelled, and
+    anything that can be modelled should not be left in the residual where
+    it competes with real objects.
+
+    So the surface is a low-order bivariate polynomial in the plane's own
+    coordinates.  It is refit over its own inliers a few times, which
+    keeps objects sitting ON the table from dragging the surface up toward
+    themselves -- the same reason the plane stage uses RANSAC rather than
+    least squares.
+
+    Returns (height_above_surface, table_mask), heights in metres.
+    """
+    e1, e2 = plane_basis(normal)
+    a, b = points @ e1, points @ e2
+    h = points @ normal + d
+
+    if order <= 0:
+        return h, table_mask
+
+    ## Centre and scale so the Vandermonde matrix stays well conditioned;
+    ## raw metre coordinates make a cubic fit numerically miserable.
+    a0, b0 = a.mean(), b.mean()
+    s = max(a.std(), b.std(), 1e-6)
+    an, bn = (a - a0) / s, (b - b0) / s
+
+    terms = [(i, j) for i in range(order + 1)
+             for j in range(order + 1 - i)]
+    design = np.stack([an ** i * bn ** j for i, j in terms], axis=1)
+
+    mask = table_mask.copy()
+    resid = h
+    for _ in range(passes):
+        if mask.sum() < len(terms) * 4:
+            break
+        coef, *_ = np.linalg.lstsq(design[mask], h[mask], rcond=None)
+        resid = h - design @ coef
+        mask = np.abs(resid) < tol
+
+    return resid, mask
+
+
 def cluster_objects(points: np.ndarray, eps: float, min_samples: int):
     """DBSCAN over the non-table points -> integer labels (-1 = noise).
 
@@ -462,6 +552,11 @@ def serve_viser(payload: dict, port: int) -> None:
     points = payload["points"]
     colors = payload["colors"]
     table_mask = payload["table_mask"]
+    ## The clustered subset is NOT simply "not the table": capture also
+    ## gates on height and on the table's footprint, so labels line up with
+    ## that narrower mask.  Using ~table_mask here silently paints the
+    ## wrong points -- which it did until this was stored explicitly.
+    obj_mask = payload["obj_mask"]
     labels = payload["labels"]
     point_size = float(payload.get("point_size", 0.002))
 
@@ -472,7 +567,7 @@ def serve_viser(payload: dict, port: int) -> None:
         point_size=point_size,
     )
 
-    obj_pts = points[~table_mask]
+    obj_pts = points[obj_mask]
     ids = sorted(int(l) for l in set(labels.tolist()) if l >= 0)
     palette = distinct_colors(len(ids))
     for i, label in enumerate(ids):
@@ -517,7 +612,8 @@ def cmd_capture(args) -> None:
     print(f"\n  camera {args.camera}  serial {serial}")
     print(f"  grabbing {args.median} frames (after {args.warmup} warmup) ...")
     depth_m, color, intrinsics = grab_frames(
-        serial, args.median, args.warmup, args.width, args.height, args.fps)
+        serial, args.median, args.warmup, args.width, args.height, args.fps,
+        filters=not args.no_filters)
 
     points, colors = deproject(depth_m, color, intrinsics)
     n_raw = len(points)
@@ -545,7 +641,10 @@ def cmd_capture(args) -> None:
     if normal @ np.array([0.0, 0.0, 1.0]) > 0:
         normal, d = -normal, -d
 
-    signed = points @ normal + d
+    ## Bend the model to the table's measured shape before deciding what
+    ## stands on it; see fit_surface for why a plane leaves too much behind.
+    signed, table_mask = fit_surface(points, table_mask, normal, d,
+                                     args.surface_order, args.plane_tol)
     inside, extent = table_footprint(points, table_mask, normal,
                                      args.footprint_margin, args.footprint_pct)
 
@@ -596,8 +695,7 @@ def cmd_capture(args) -> None:
         c = pts.mean(axis=0)
         a, b = pts @ e1, pts @ e2
         foot = ((a.max() - a.min()) * 1000.0, (b.max() - b.min()) * 1000.0)
-        h = pts @ normal + d
-        height = float(h.max() * 1000.0)
+        height = float(signed[above][sel].max() * 1000.0)
         print(f"  {label:>4}  {int(sel.sum()):>7,}  "
               f"[{c[0]:+.3f} {c[1]:+.3f} {c[2]:+.3f}]  "
               f"{foot[0]:6.0f} x{foot[1]:6.0f}  {height:9.0f}")
@@ -606,6 +704,7 @@ def cmd_capture(args) -> None:
             "centroid_m": c.tolist(),
             "footprint_mm": list(foot),
             "height_above_table_mm": height,
+            "mean_rgb": obj_colors[sel].mean(axis=0).round(1).tolist(),
         })
     n_noise = int((labels == -1).sum())
     if n_noise:
@@ -625,7 +724,8 @@ def cmd_capture(args) -> None:
     np.savez_compressed(
         out / f"{stem}.npz",
         points=points, colors=colors, table_mask=table_mask,
-        labels=labels, plane_normal=normal, plane_d=d,
+        obj_mask=above, labels=labels, plane_normal=normal, plane_d=d,
+        height=signed,
     )
     (out / f"{stem}_report.json").write_text(json.dumps({
         "frame": "camera_optical",
@@ -635,6 +735,7 @@ def cmd_capture(args) -> None:
         "camera": args.camera, "serial": serial,
         "intrinsics": intrinsics,
         "plane": {"normal": normal.tolist(), "d": float(d),
+                  "surface_order": args.surface_order,
                   "footprint_m": list(extent)},
         "gates": {"max_depth_m": args.max_depth, "voxel_m": args.voxel,
                   "plane_tol_m": args.plane_tol,
@@ -659,7 +760,8 @@ def cmd_capture(args) -> None:
 
     if not args.no_view:
         serve_viser({"points": points, "colors": colors,
-                     "table_mask": table_mask, "labels": labels,
+                     "table_mask": table_mask, "obj_mask": above,
+                     "labels": labels,
                      "point_size": args.point_size}, args.port)
 
 
@@ -667,8 +769,8 @@ def cmd_view(args) -> None:
     data = np.load(args.load)
     serve_viser({
         "points": data["points"], "colors": data["colors"],
-        "table_mask": data["table_mask"], "labels": data["labels"],
-        "point_size": args.point_size,
+        "table_mask": data["table_mask"], "obj_mask": data["obj_mask"],
+        "labels": data["labels"], "point_size": args.point_size,
     }, args.port)
 
 
@@ -698,6 +800,10 @@ def main() -> None:
     cap.add_argument("--plane-tol", type=float, default=0.015,
                      help="table inlier band, metres (default 15 mm, sized for\n                          a scene camera; drop to 0.004 for a wrist cam)")
     cap.add_argument("--ransac-iters", type=int, default=400)
+    cap.add_argument("--surface-order", type=int, default=3,
+                     help="polynomial order for the table surface (default 3; "
+                          "0 = flat plane, which leaves the table's own "
+                          "plank structure in the residual)")
     cap.add_argument("--max-height", type=float, default=0.30,
                      help="metres above the table an object may reach "
                           "(default 0.30; taller things are arms and walls)")
@@ -712,6 +818,9 @@ def main() -> None:
     cap.add_argument("--min-samples", type=int, default=25)
     cap.add_argument("--seed", type=int, default=0)
     cap.add_argument("--out", default=None)
+    cap.add_argument("--no-filters", action="store_true",
+                     help="skip librealsense spatial/temporal filtering "
+                          "(raw depth; much noisier at range)")
     cap.add_argument("--no-view", action="store_true")
     cap.add_argument("--port", type=int, default=8097)
     cap.add_argument("--point-size", type=float, default=0.002)
