@@ -433,6 +433,44 @@ def fit_surface(points: np.ndarray, table_mask: np.ndarray,
     return resid, mask
 
 
+def table_view_transform(normal: np.ndarray, d: float):
+    """Rotation+offset that puts the table flat and up-is-up, for DISPLAY.
+
+    A RealSense reports in the optical frame: +x right, +y DOWN, +z forward.
+    viser draws a z-up world.  Feed one to the other and the table arrives
+    upside down and edge-on, which is exactly what it looks like.
+
+    This is a VIEWING convenience and nothing more.  It is built from the
+    plane this capture just fitted, so it says which way is up relative to
+    THIS TABLE -- it does not know where the robot is, and it is not the
+    world frame.  Every number in the JSON report stays in the camera
+    frame; only the rendered geometry is rotated.  The transform is stored
+    in the npz so a reload reproduces the same view.
+
+    Returns (R, t) with  p_view = p_camera @ R.T + t.
+    """
+    ## +z of the view IS the plane normal as the pipeline oriented it --
+    ## not a re-derived one.  cmd_capture already flipped `normal` so that
+    ## `signed = p @ normal + d` is POSITIVE for things standing on the
+    ## table, so reusing it verbatim makes the rendered height equal the
+    ## height the segmentation reasoned about.  Re-deriving the sign here
+    ## is how the first version put every object underneath the table.
+    z = normal / np.linalg.norm(normal)
+
+    ## Keep the camera's own "right" as close to +x as possible, so the
+    ## view is not arbitrarily spun about the vertical each capture.
+    ref = np.array([1.0, 0.0, 0.0])
+    if abs(z @ ref) > 0.9:
+        ref = np.array([0.0, 1.0, 0.0])
+    x = ref - (ref @ z) * z
+    x /= np.linalg.norm(x)
+    y = np.cross(z, x)
+    R = np.stack([x, y, z], axis=0)
+    ## Put the table surface at z = 0.
+    t = np.array([0.0, 0.0, float(d)])
+    return R, t
+
+
 def cluster_objects(points: np.ndarray, eps: float, min_samples: int):
     """DBSCAN over the non-table points -> integer labels (-1 = noise).
 
@@ -560,7 +598,17 @@ def serve_viser(payload: dict, port: int) -> None:
     labels = payload["labels"]
     point_size = float(payload.get("point_size", 0.002))
 
+    ## Rotate into the table-aligned VIEW frame (see table_view_transform);
+    ## without this a camera-optical cloud renders upside down in viser,
+    ## because the optical +y axis points DOWN and viser's world is z-up.
+    R = payload.get("view_R")
+    t = payload.get("view_t")
+    if R is not None and t is not None:
+        points = points @ np.asarray(R).T + np.asarray(t)
+
     server = viser.ViserServer(port=port)
+    server.scene.add_grid("/table_plane", width=1.6, height=1.6,
+                          cell_size=0.05)
     server.scene.add_point_cloud(
         "/table", points=points[table_mask].astype(np.float32),
         colors=np.full((int(table_mask.sum()), 3), 110, dtype=np.uint8),
@@ -645,6 +693,7 @@ def cmd_capture(args) -> None:
     ## stands on it; see fit_surface for why a plane leaves too much behind.
     signed, table_mask = fit_surface(points, table_mask, normal, d,
                                      args.surface_order, args.plane_tol)
+    view_R, view_t = table_view_transform(normal, d)
     inside, extent = table_footprint(points, table_mask, normal,
                                      args.footprint_margin, args.footprint_pct)
 
@@ -656,6 +705,18 @@ def cmd_capture(args) -> None:
     obj_colors = colors[above]
 
     labels = cluster_objects(obj_points, args.eps, args.min_samples)
+
+    ## Drop clusters that never rise clear of the noise.  The random part
+    ## of this sensor's error was measured at ~5.7 mm per capture, so a
+    ## bump under ~3 sigma is not an object no matter how many points it
+    ## has -- and leaving those in is what fills the viewer with confetti.
+    obj_h = signed[above]
+    for label in set(labels.tolist()):
+        if label < 0:
+            continue
+        sel = labels == label
+        if obj_h[sel].max() < args.min_object_height:
+            labels[sel] = -1
     ids = sorted(int(l) for l in set(labels.tolist()) if l >= 0)
 
     print(f"\n  pixels                 {n_raw:>9,}")
@@ -725,7 +786,7 @@ def cmd_capture(args) -> None:
         out / f"{stem}.npz",
         points=points, colors=colors, table_mask=table_mask,
         obj_mask=above, labels=labels, plane_normal=normal, plane_d=d,
-        height=signed,
+        height=signed, view_R=view_R, view_t=view_t,
     )
     (out / f"{stem}_report.json").write_text(json.dumps({
         "frame": "camera_optical",
@@ -761,7 +822,7 @@ def cmd_capture(args) -> None:
     if not args.no_view:
         serve_viser({"points": points, "colors": colors,
                      "table_mask": table_mask, "obj_mask": above,
-                     "labels": labels,
+                     "labels": labels, "view_R": view_R, "view_t": view_t,
                      "point_size": args.point_size}, args.port)
 
 
@@ -771,6 +832,8 @@ def cmd_view(args) -> None:
         "points": data["points"], "colors": data["colors"],
         "table_mask": data["table_mask"], "obj_mask": data["obj_mask"],
         "labels": data["labels"], "point_size": args.point_size,
+        "view_R": data["view_R"] if "view_R" in data else None,
+        "view_t": data["view_t"] if "view_t" in data else None,
     }, args.port)
 
 
@@ -816,6 +879,10 @@ def main() -> None:
     cap.add_argument("--eps", type=float, default=0.012,
                      help="DBSCAN neighbourhood, metres (default 12 mm)")
     cap.add_argument("--min-samples", type=int, default=25)
+    cap.add_argument("--min-object-height", type=float, default=0.017,
+                     help="metres a cluster must stand proud of the table "
+                          "to count (default 0.017 = 3 sigma of this "
+                          "sensor's measured random noise)")
     cap.add_argument("--seed", type=int, default=0)
     cap.add_argument("--out", default=None)
     cap.add_argument("--no-filters", action="store_true",
