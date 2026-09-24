@@ -32,10 +32,7 @@ except ImportError:
     RTCRtpSender = None
     VideoFrame = None
 
-if __package__:
-    from .headset_utils import HeadsetData, HeadsetFeedback, convert_left_to_right_coordinates
-else:
-    from headset_utils import HeadsetData, HeadsetFeedback, convert_left_to_right_coordinates
+from headset_utils import HeadsetData, HeadsetFeedback, convert_left_to_right_coordinates
 
 def force_codec(pc, sender, forced_codec):
     if RTCRtpSender is None:

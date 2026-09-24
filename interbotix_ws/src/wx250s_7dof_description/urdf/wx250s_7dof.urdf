@@ -25,7 +25,8 @@
         <parent link="430-Base-v3" />
         <child link="430-Dual-Shoulder-v2" />
         <axis xyz="-1.5407439555097887e-33 0.0 1.0" />
-        <limit effort="10" lower="-6.35" upper="0.00" velocity="3.141592653589793" />
+        <!-- Waist frame mirrored after encoder wrap; measured range remapped from [-6.35, 0.00] to [0.00, 6.35]. -->
+        <limit effort="10" lower="-4.90" upper="4.90" velocity="3.141592653589793" />
         <dynamics friction="0.1" />
     </joint>
 
@@ -258,7 +259,7 @@
         <parent link="gripper_motor" />
         <child link="middlecamera" />
         <axis xyz="-6.162975822039155e-33 -2.465190328815662e-32 0.9999999999999999" />
-        <limit effort="1" lower="-3.10" upper="3.07" velocity="3.141592653589793" />
+        <limit effort="1" lower="-3.10" upper="3.30" velocity="3.141592653589793" />
     </joint>
 
     <transmission name="trans_camera_yaw">

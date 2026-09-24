@@ -27,6 +27,7 @@ than silently ignored.
 
 import argparse
 import json
+import sys
 import os
 import random
 import threading
@@ -51,51 +52,33 @@ except ImportError:  # pragma: no cover - the dry-run import check
 ## choice that does not compete with a training run for GPU memory.
 ## Override with GIAVA_JAX_PLATFORM=gpu (an explicit JAX_PLATFORMS always
 ## wins -- apply() only ever setdefault()s).
-try:
-    from .jax_platform import apply as _apply_jax_platform
-except ImportError:
-    from jax_platform import apply as _apply_jax_platform
+from jax_platform import apply as _apply_jax_platform
 _apply_jax_platform("cpu")
 
-if __package__:
-    from .arm_config import ARM_CONFIG, POSES
-    from .camera_manager import (
-        CameraConfig,
-        get_active_cameras,
-        join_camera_workers,
-        select_synchronized_frames,
-        setup_cameras,
-    )
-    from .canonicalize_waist import canonical_branch
-    from .data_col_config import ARM_MODES, TeleopConfig
-    from .gripper import GRIPPER_CLOSED, GRIPPER_OPEN, command_gripper
-    from .robot_control import (
-        apply_profile_limits,
-        create_and_configure_robots,
-        get_pose,
-        move_arms_together,
-        move_to_named_poses,
-    )
-else:
-    from arm_config import ARM_CONFIG, POSES
-    from camera_manager import (
-        CameraConfig,
-        get_active_cameras,
-        join_camera_workers,
-        select_synchronized_frames,
-        setup_cameras,
-    )
-    from canonicalize_waist import canonical_branch
-    from data_col_config import ARM_MODES, TeleopConfig
-    from gripper import GRIPPER_CLOSED, GRIPPER_OPEN, command_gripper
-    from robot_control import (
-        apply_profile_limits,
-        create_and_configure_robots,
-        get_pose,
-        move_arms_together,
-        move_to_named_poses,
-    )
+from arm_config import ARM_CONFIG, POSES
+from camera_manager import (
+    CameraConfig,
+    get_active_cameras,
+    join_camera_workers,
+    select_synchronized_frames,
+    setup_cameras,
+)
+from canonicalize_waist import canonical_branch
+from data_col_config import ARM_MODES, TeleopConfig
+from gripper import GRIPPER_CLOSED, GRIPPER_OPEN, command_gripper
+from robot_control import (
+    apply_profile_limits,
+    create_and_configure_robots,
+    get_pose,
+    move_arms_together,
+    move_to_named_poses,
+)
 
+
+## Where policy_training/ lives, so custom policy types (act_objhead)
+## can be imported when loading a checkpoint that uses one.
+PATHS_POLICY_TRAINING = (Path(__file__).resolve()
+                         .parents[4] / "policy_training")
 
 frame_lock = threading.Lock()
 camera_shutdown = threading.Event()
@@ -179,6 +162,23 @@ def load_policy(ckpt_dir, device, temporal_ensemble=None):
         make_pre_post_processors,
     )
     from lerobot.configs.policies import PreTrainedConfig
+
+    ## CUSTOM POLICY TYPES.  lerobot's factory dispatches on a hardcoded
+    ## if/elif chain, so a checkpoint whose config.type is not one of its own
+    ## names (e.g. "act_objhead", the auxiliary object-position head) fails to
+    ## load with an unhelpful error.  policy_training/act_objhead.py registers
+    ## the config subclass AND patches factory.get_policy_class on import, so
+    ## importing it is all that is needed.  Optional: a rig without the
+    ## training tree still rolls out stock ACT/diffusion/pi0 fine.
+    if str(PATHS_POLICY_TRAINING) not in sys.path:
+        sys.path.insert(0, str(PATHS_POLICY_TRAINING))
+    try:
+        import act_objhead  # noqa: F401
+    except ImportError as _exc:
+        ## Only a problem for a checkpoint that USES a custom type; say so
+        ## rather than failing later inside draccus with an opaque message.
+        print(f"[policy] custom policy types unavailable ({_exc}); "
+              f"stock ACT/diffusion/pi0 checkpoints still load")
 
     cfg = PreTrainedConfig.from_pretrained(ckpt_dir)
     if temporal_ensemble is not None:
@@ -273,20 +273,12 @@ class SafetyGates:
         ## CPU by default: the GPU is usually busy training, and the gates
         ## cost ~0.25 ms/tick on CPU against a 20 ms budget.  Must be set
         ## before anything imports jax.
-        try:
-            from .jax_platform import apply as _apply_jax
-        except ImportError:
-            from jax_platform import apply as _apply_jax
+        from jax_platform import apply as _apply_jax
         _apply_jax(jax_platform)
 
-        try:
-            from .arm_config import ARM_CONFIG, URDF_PATH
-            from .robot_control import build_robot_model
-            from .study_ik import CoupledStudyIK
-        except ImportError:
-            from arm_config import ARM_CONFIG, URDF_PATH
-            from robot_control import build_robot_model
-            from study_ik import CoupledStudyIK
+        from arm_config import ARM_CONFIG, URDF_PATH
+        from robot_control import build_robot_model
+        from study_ik import CoupledStudyIK
         from yourdfpy import URDF
 
         self.robot, self.arm_data = build_robot_model(mode)
@@ -294,16 +286,10 @@ class SafetyGates:
 
         self.capsule = self.table = None
         if want_capsule:
-            try:
-                from .capsule_gate import build_gate as bc
-            except ImportError:
-                from capsule_gate import build_gate as bc
+            from capsule_gate import build_gate as bc
             self.capsule = bc(self.robot, urdf)
         if want_table:
-            try:
-                from .table_gate import build_gate as bt
-            except ImportError:
-                from table_gate import build_gate as bt
+            from table_gate import build_gate as bt
             self.table = bt(self.robot, urdf)
 
         self.ik = CoupledStudyIK(
@@ -324,10 +310,7 @@ class SafetyGates:
         ## `inactive_pose`; they are not sensed, so if one is parked somewhere
         ## else the gate is checking the wrong geometry either way.
         self.q_cmd = np.zeros(self.n_act, dtype=float)
-        try:
-            from .arm_config import ARM_CONFIG as _AC, POSES as _POSES
-        except ImportError:
-            from arm_config import ARM_CONFIG as _AC, POSES as _POSES
+        from arm_config import ARM_CONFIG as _AC, POSES as _POSES
         inactive = [a for a in ("left", "right", "middle") if a not in arm_names]
         for a in inactive:
             if inactive_pose not in _POSES[a]:
@@ -434,9 +417,105 @@ def make_extractor(scene, target=None, env_dim=None):
         return ss.Extractor(target)
     try:
         import scene_features as sf
+        import wrist_features as wf
     except ImportError:
         from . import scene_features as sf
+        from . import wrist_features as wf
+    ## The checkpoint's env dim says which flower vector it trained on:
+    ## 9 = wrist_features (gripper-centric, needs right_wrist + top_scene),
+    ## 12 = scene_features (top_scene only).  See envstate-rank-4 notes in
+    ## wrist_features.py for why the 9-d one exists.
+    if env_dim == wf.FEATURE_DIM:
+        return wf.Extractor()
+    try:
+        import eedist_features as ef
+    except ImportError:
+        from . import eedist_features as ef
+    if env_dim == ef.FEATURE_DIM:
+        return ef.Extractor()
     return sf.Extractor()
+
+
+MASK_CAM = "obj_mask"
+MASK_DILATE = {"dilate": 3, "source": "top_scene"}   # overwritten from the dataset's info.json
+
+
+def render_obj_mask(top_rgb):
+    """The obj_mask 'camera', rendered live from top_scene with the SAME rule
+    build_mask_dataset.py baked into the training videos (largest blue blob,
+    static targets subtracted, dilated).  Returned as an HxWx3 uint8 frame so
+    the rest of the pipeline treats it like any other camera."""
+    from object_mask import mask_for
+    m = mask_for(top_rgb, MASK_DILATE["source"], MASK_DILATE["dilate"])
+    return np.repeat(m[:, :, None], 3, axis=2)
+
+
+def env_vector(extractor, frames, latest_frames, frame_lock, ee_xyz=None):
+    """observation.environment_state for this tick, or (None, why).
+
+    Prefers the tick's own synchronized frames so the features describe the
+    same instant as the image tokens; falls back to the newest frame.  A
+    two-camera extractor (wrist_features) gets (right_wrist, top_scene)."""
+    def _get(cam):
+        img = frames.get(cam) if frames else None
+        if img is None:
+            with frame_lock:
+                img = latest_frames.get(cam)
+                img = img.copy() if img is not None else None
+        return img
+    top = _get("top_scene")
+    if top is None:
+        return None, "no top_scene frame for env-state"
+    if getattr(extractor, "NEEDS_TWO_CAMERAS", False):
+        wrist = _get("right_wrist")
+        if wrist is None:
+            return None, "no right_wrist frame for env-state"
+        return extractor(wrist, top), None
+    if getattr(extractor, "NEEDS_EE", False):
+        ## The metric gripper->object vector needs where the gripper IS, from
+        ## FK of the commanded joints -- the same quantity the training column
+        ## was built from (observation.ee_pose, not the measured pose).
+        if ee_xyz is None:
+            return None, "no end-effector pose for env-state"
+        return extractor(top, ee_xyz), None
+    return extractor(top), None
+
+
+def apply_delta(prev, action, absolute_cols):
+    """Apply ONE per-step delta to a reference command -- the inverse of
+    build_relative_action_dataset.to_relative, one tick at a time.
+
+    Deliberately not called `integrate_*`: this is a single Euler step, and
+    it is the LOOP that integrates (out[t] = out[t-1] + delta[t], a discrete
+    cumulative sum).  What the caller passes as `prev` decides whether any
+    integration happens at all -- the running command integrates, the
+    measured state (--reanchor) restarts from wherever the arm actually is,
+    and `absolute_cols` bypass the arithmetic completely."""
+    out = np.asarray(prev, dtype=np.float32) + np.asarray(action, dtype=np.float32)
+    for c in absolute_cols:
+        out[c] = action[c]
+    return out
+
+
+def ee_xyz_now(gates, arm):
+    """End-effector position of the CURRENT commanded configuration, in the
+    URDF base frame -- the frame assets/flower_px2ee.json was fitted in.
+
+    gates.q_cmd is the running command the tick loop maintains, so this is FK
+    of what the arm has been told to do, matching how observation.ee_pose was
+    recorded.  Returns None when the gates are off (no robot model to ask)."""
+    if gates is None:
+        return None
+    from arm_config import ARM_CONFIG
+    robot = gates.robot
+    if not hasattr(ee_xyz_now, "_idx"):
+        ee_xyz_now._idx = {}
+    key = ARM_CONFIG[arm]["ee_link"]
+    if key not in ee_xyz_now._idx:
+        ee_xyz_now._idx[key] = list(robot.links.names).index(key)
+    q_urdf = gates.ik.driver_to_urdf(np.asarray(gates.q_cmd, dtype=float))
+    fk = np.asarray(robot.forward_kinematics(np.asarray(q_urdf, dtype=np.float32)))
+    return np.asarray(fk[ee_xyz_now._idx[key], 4:7], dtype=float)   # wxyz_xyz -> xyz
 
 
 def object_track(frames_by_tick, extractor):
@@ -586,17 +665,17 @@ def score_episode(metrics, ep, n_eps, stages):
           "  ".join(f"{k}={name}" for k, name in stages) +
           "   flags: " + "  ".join(f"{k}={n}" for k, n in flags))
     _seen = metrics.get("obj_found_frac")
-    _blind = _seen is not None and _seen < 0.5
-    if _blind:
+    _unseen = _seen is not None and _seen < 0.5
+    if _unseen:
         print(f"      [!] the object was visible in only {_seen:.0%} of frames, "
               f"so the final-distance number above is measured from a stale "
               f"sighting.  The suggestion CANNOT see whether it went in --")
         print(f"      [!] type the stages yourself; ENTER alone is refused here.")
     print(f"      auto suggests '{guess_letters or '-'}'   "
-          f"({'letters required' if _blind else 'ENTER=accept'}, "
+          f"({'letters required' if _unseen else 'ENTER=accept'}, "
           f"letters=override, -=none, x=discard)")
     raw = read_line("    > ").strip().lower()
-    while _blind and raw == "":
+    while _unseen and raw == "":
         print("      [!] no default here -- type the letters reached, "
               "'-' for none, or x to discard.")
         raw = read_line("    > ").strip().lower()
@@ -804,6 +883,14 @@ def build_observation(image_keys, cameras, state, device, task=None, latest=None
     with it, and a switch that silently changes what the policy sees relative
     to its training data is not a debug aid.
     """
+    ## obj_mask is not a physical camera: it is rendered from top_scene after
+    ## the real frames are chosen, so it is exactly as old as the frame it
+    ## came from.
+    want_mask = MASK_CAM in cameras
+    phys = [c for c in cameras if c != MASK_CAM]
+    mask_src = MASK_DILATE.get("source", "top_scene")     # top_scene or right_wrist, per info.json
+    if want_mask and mask_src not in phys:
+        phys = phys + [mask_src]
     with frame_lock:
         if latest is not None:
             ## LATEST-WINS, the recorder's DAgger path.  select_synchronized_
@@ -812,13 +899,16 @@ def build_observation(image_keys, cameras, state, device, task=None, latest=None
             ## policy sees back to that lagging moment, with a small "spread"
             ## that looks healthy.  This bypasses that entirely.
             frames = {c: (latest.get(c).copy() if latest.get(c) is not None else None)
-                      for c in cameras}
+                      for c in phys}
             info = {"reference_s": None, "spread_s": None, "per_camera": {},
-                    "cameras_missing": [c for c in cameras if frames[c] is None]}
+                    "cameras_missing": [c for c in phys if frames[c] is None]}
         else:
-            frames, _ts, info = select_synchronized_frames(cameras)
+            frames, _ts, info = select_synchronized_frames(phys)
             frames = {c: (f.copy() if f is not None else None)
                       for c, f in frames.items()}
+    if want_mask:
+        frames[MASK_CAM] = (render_obj_mask(frames[mask_src])
+                            if frames.get(mask_src) is not None else None)
         ## Frame AGE, not just spread: how far behind wall-clock the frames
         ## the policy is about to act on actually are.  All camera clocks are
         ## mapped to the host epoch (camera_manager), so this is comparable.
@@ -940,7 +1030,14 @@ def parse_args():
                     help=f"arm mode ({sorted(ARM_MODES)})")
     ap.add_argument("--episodes", type=int, default=5)
     ap.add_argument("--seconds", type=float, default=20.0,
-                    help="wall-clock cap per rollout")
+                    help="wall-clock cap per rollout.  0 = NO cap: the episode "
+                         "runs until you type s (end this episode) or q (quit "
+                         "the run).  Any cap can be extended mid-episode: "
+                         "type + for another --extend seconds, or +N for N "
+                         "seconds (then ENTER).")
+    ap.add_argument("--extend", type=float, default=15.0, metavar="S",
+                    help="seconds added to the cap each time you type + "
+                         "during an episode (default 15)")
     ap.add_argument("--hz", type=float, default=None,
                     help="control rate; default: the checkpoint's dataset fps")
     ap.add_argument("--start-pose", default=None,
@@ -949,6 +1046,18 @@ def parse_args():
                          "'right=forward,middle=forward_demo'; default: the "
                          "start_pose recorded in the training run's "
                          "teleop_config.json, else 'forward'")
+    ap.add_argument("--reanchor", type=int, default=0, metavar="N",
+                    help="DELTA-ACTION checkpoints only: every N ticks, "
+                         "integrate the predicted deltas onto the MEASURED "
+                         "joint state instead of onto the last command.  "
+                         "Deltas have no absolute anchor, so prediction error "
+                         "accumulates monotonically over an episode -- "
+                         "re-anchoring resets it every N ticks at the cost of "
+                         "a little lag (measured trails commanded).  0 = off "
+                         "(pure integration).  Try the chunk length, 20.")
+    ap.add_argument("--force-dataset", action="store_true",
+                    help="skip the check that --dataset is the variant the "
+                         "checkpoint trained on")
     ap.add_argument("--dataset", default=None,
                     help="training run dir, to read fps + start pose from. "
                          "Default: whatever the checkpoint's train_config.json "
@@ -992,12 +1101,6 @@ def parse_args():
                          "day, not the policy.")
     ap.add_argument("--ab-seed", type=int, default=0,
                     help="seed for the per-scene A/B order (default 0)")
-    ap.add_argument("--unblind", action="store_true",
-                    help="A/B: print which checkpoint is driving. Off by "
-                         "default -- you score these by eye, and knowing "
-                         "which one is the fine-tune is exactly the bias the "
-                         "pairing exists to remove. The true identity is "
-                         "always written to the score record either way.")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--out", default=None,
                     help="directory for rollout logs (default: rollouts/)")
@@ -1016,6 +1119,31 @@ def parse_args():
                     help="where the arms this mode does NOT drive are assumed "
                          "to be parked, for the inter-arm capsule gate. They "
                          "are not sensed; the default matches --quit-pose.")
+    ap.add_argument("--ask-task", action="store_true",
+                    help="shape_sorter: type the piece name at each episode's\n                         start prompt instead of fixing one with --target. "
+                         "The instruction handed to a language-conditioned "
+                         "policy changes per episode, so one run tests all "
+                         "three pieces in the SAME scene -- which is the "
+                         "comparison --target across separate runs cannot "
+                         "make. Scoring follows the piece you name.")
+    ap.add_argument("--auto-reset", action="store_true",
+                    help="between rollouts, the arm itself picks the flower up "
+                         "and places it at the episode's --cells label "
+                         "(auto_reset.py: scripted pick-place on the px->EE "
+                         "fit, gate-checked, verified in top_scene).  Needs "
+                         "--cells; dry-run without --engage prints the plan.")
+    ap.add_argument("--reset-tol", type=float, default=12.0, metavar="PX",
+                    help="--auto-reset accepts a placement within this many "
+                         "top_scene pixels of the cell (~2.5 mm/px)")
+    ap.add_argument("--repeat", type=int, default=1, metavar="N",
+                    help="repeat each --cells label N times in a row before "
+                         "moving to the next (A1,A2 --repeat 4 -> "
+                         "A1 A1 A1 A1 A2 A2 A2 A2)")
+    ap.add_argument("--show-env", type=int, default=0, metavar="N",
+                    help="print the observation.environment_state vector "
+                         "(named) every N ticks during an episode, so you can "
+                         "watch what the policy is being told.  It is logged "
+                         "on every tick regardless (row['env']).")
     ap.add_argument("--place-grid", action="store_true",
                     help="between episodes, show top_scene with the hull-study "
                          "lattice (place_grid.py) and name the nearest cell; "
@@ -1138,7 +1266,16 @@ def main():
                 f"extractor produces {extractor.FEATURE_DIM}-d -- wrong "
                 f"--target / scene for this checkpoint?")
         print(f"[env-state] feeding {ENV_KEY} ({want}-d, scene={scene}"
-              + (f", target={args.target}" if args.target else "") + ")")
+              + (f", target={args.target}" if args.target else "")
+              + (", from right_wrist+top_scene"
+                 if getattr(extractor, "NEEDS_TWO_CAMERAS", False) else "") + ")")
+        if getattr(extractor, "NEEDS_TWO_CAMERAS", False) and args.checkpoint_b:
+            raise SystemExit("A/B is not wired for the wrist env-state extractor.")
+        if getattr(extractor, "NEEDS_EE", False) and args.gates == "off":
+            raise SystemExit(
+                "this checkpoint's env-state is a metric gripper->object "
+                "vector, which needs FK from the gates' robot model: run with "
+                "--gates on (the default).")
     elif args.target:
         print(f"[scene] shape_sorter target={args.target} (scoring only; "
               f"this checkpoint takes no {ENV_KEY})")
@@ -1254,16 +1391,14 @@ def main():
         for _f in _first:
             ab["plan"] += [_f, "b" if _f == "a" else "a"]
         ab["plan"] = ab["plan"][:args.episodes]
-        ## The blinded name the operator sees.  Per SCENE, so the two
-        ## episodes of a pair are "P1" and "P2" in the order they are run and
-        ## nothing carries across scenes.
+        ## Per SCENE the two episodes of a pair are "P1" and "P2" in the
+        ## order they are run.  The driving checkpoint is ALWAYS printed:
+        ## blinding was removed 2026-09-19 -- with a single operator scoring
+        ## by eye, not knowing which policy is running was found to make the
+        ## bias worse, not better (the operator guesses, then scores the
+        ## guess).  The pairing itself is what controls for scene setup.
         print(f"[A/B] {n_scenes} scene(s) x 2 policies = {args.episodes} "
               f"episodes, order seeded with --ab-seed {args.ab_seed}")
-        if args.unblind:
-            print("[A/B] UNBLINDED -- the driving checkpoint is printed")
-        else:
-            print("[A/B] blinded: each episode is announced as P1/P2 only; "
-                  "the true checkpoint goes to the score record")
         print(f"[A/B]   A = {ckpt_dir}")
         print(f"[A/B]   B = {ckpt_b}")
 
@@ -1291,6 +1426,32 @@ def main():
     fps, start_pose, ds_root = None, None, None
     if args.dataset:
         ds_root = Path(args.dataset)
+        ## --dataset MUST be the dataset this checkpoint trained on -- the
+        ## rollout reads the ACTION SPACE from it.  On 2026-09-19 the delta-
+        ## action checkpoint was launched with the wrist env-state root: no
+        ## "joint_delta" there, so per-step deltas (numbers near zero) were
+        ## sent as absolute joint targets and the arm went to its zero pose
+        ## and held.  The checkpoint records its training root; the variant
+        ## name (transfer_flower_merged_rel, _wrist, ...) has to agree.
+        try:
+            _tcfg = json.loads((ckpt_dir / "train_config.json").read_text())
+            _trained = Path(_tcfg["dataset"]["root"])
+            _t_name, _d_name = _trained.parent.name, ds_root.parent.name
+            if _t_name != _d_name and not args.force_dataset:
+                raise SystemExit(
+                    f"--dataset names variant {_d_name!r} but this checkpoint "
+                    f"trained on {_t_name!r} ({_trained}).  The action space, "
+                    f"env-state layout and fps are read from --dataset, so a "
+                    f"mismatch changes what the arm does.  Point --dataset at "
+                    f".../{_t_name}/{_trained.name}, or pass --force-dataset "
+                    f"if you really mean it.")
+            print(f"[cfg] --dataset {ds_root}  (matches the checkpoint's "
+                  f"training variant {_t_name!r})")
+        except SystemExit:
+            raise
+        except Exception as exc:
+            print(f"[cfg] could not cross-check --dataset against the "
+                  f"checkpoint ({exc})")
     else:
         try:
             tcfg = json.loads((ckpt_dir / "train_config.json").read_text())
@@ -1334,6 +1495,38 @@ def main():
             waist_ref, waist_name = None, "middle_base"
             waist_ds_reclock = 0.0
             ee_action_space = None
+    ## build_relative_action_dataset.py records its action space in info.json
+    ## (meta.json is the EE builder's home); read both.
+    delta_action, delta_abs_cols = False, []
+    if ds_root is not None:
+        try:
+            _info = json.loads((ds_root / "meta" / "info.json").read_text())
+            if ee_action_space is None:
+                ee_action_space = _info.get("action_space")
+            if str(_info.get("action_space")) == "joint_delta":
+                delta_action = True
+                delta_abs_cols = [int(c) for c in _info.get("delta_absolute_cols", [])]
+            if _info.get("obj_mask"):
+                MASK_DILATE.update(_info["obj_mask"])
+        except Exception:
+            pass
+    reanchor = int(args.reanchor or 0)
+    if reanchor and not delta_action:
+        raise SystemExit("--reanchor only applies to a delta-action checkpoint.")
+    if delta_action:
+        if args.checkpoint_b:
+            raise SystemExit("A/B is not wired for delta-action checkpoints.")
+        print(f"[policy] delta integration: "
+              + (f"re-anchored to the MEASURED state every {reanchor} ticks"
+                 if reanchor else "pure (no re-anchor; drift accumulates)"))
+        _n_act = int(getattr(pcfg, "n_action_steps", 0) or 0)
+        _chunk = int(getattr(pcfg, "chunk_size", 0) or 0)
+        print(f"[policy] DELTA-ACTION checkpoint: per-step joint deltas "
+              f"integrated onto the last command; absolute cols={delta_abs_cols}")
+        if _chunk and _n_act >= _chunk and args.n_action_steps is None:
+            print(f"[policy] WARNING: n_action_steps == chunk_size ({_chunk}); "
+                  f"integrating a whole chunk of deltas open-loop drifts. "
+                  f"Pass --n-action-steps 20.")
     ## EE-ACTION CHECKPOINT (build_ee_action_dataset.py): the action is
     ## [qw,qx,qy,qz,x,y,z,gripper] for ONE arm, 8-d, and is turned into joint
     ## targets by the coupled IK each tick (below).  The dataset's meta.json
@@ -1446,9 +1639,16 @@ def main():
     ## Cameras: exactly the ones the checkpoint names.  get_active_cameras
     ## derives the wrist cameras from the arm mode, so the scene flags only
     ## have to carry top/low.
+    mask_cam = MASK_CAM in cameras
+    if mask_cam:
+        print(f"[camera] {MASK_CAM} is rendered live from "
+              f"{MASK_DILATE['source']} (dilate={MASK_DILATE['dilate']}), "
+              f"not a physical camera")
+        if args.checkpoint_b:
+            raise SystemExit("A/B is not wired for obj_mask checkpoints.")
     need_top = ("top_scene" in cameras) or args.score or env_key is not None \
         or args.place_grid \
-        or _ab_needs_top
+        or _ab_needs_top or mask_cam
     camera_config = CameraConfig(
         top_active=need_top,
         low_active="low_scene" in cameras)
@@ -1475,7 +1675,7 @@ def main():
 
     record_cameras = list(cameras) + [c for c in witness if args.video]
     unexpected = sorted(set(active_cameras) - set(cameras) - set(witness))
-    missing = sorted(set(cameras) - set(active_cameras))
+    missing = sorted(set(cameras) - set(active_cameras) - {MASK_CAM})
     if missing:
         raise SystemExit(
             f"The checkpoint needs {missing}, which --mode {args.mode} does "
@@ -1592,6 +1792,10 @@ def main():
     ## episode is aborted and re-run.
     _cells = ([c.strip() for c in args.cells.split(",") if c.strip()]
               if args.cells else None)
+    if _cells and args.repeat > 1:
+        _cells = [c for c in _cells for _ in range(args.repeat)]
+    if args.auto_reset and not _cells:
+        raise SystemExit("--auto-reset needs --cells (which cell each episode goes to)")
     ## In A/B every scene is rolled out twice, so the SCENE index -- which
     ## snapshot to replicate, which grid cell to call it -- advances at half
     ## the episode rate.  Everything the operator sets up keys off this; only
@@ -1684,6 +1888,20 @@ def main():
         print("[gates] DISABLED -- nothing bounds a lunging checkpoint but "
               "--max-step and the driver limits.")
 
+    resetter = None
+    if args.auto_reset:
+        if gates is None:
+            raise SystemExit("--auto-reset needs the gates' IK solver: run with --gates on.")
+        if len(arm_names) != 1:
+            raise SystemExit("--auto-reset is wired for a single-arm mode only.")
+        if "top_scene" not in active_cameras:
+            raise SystemExit("--auto-reset needs top_scene to locate the flower.")
+        from auto_reset import AutoReset
+        resetter = AutoReset(robots, gates, arm_names[0], latest_frames, frame_lock,
+                             engage=args.engage, tol_px=args.reset_tol)
+        print(f"[reset] auto-reset ON: cells {sorted(set(_cells))}, "
+              f"tol {args.reset_tol:g} px, {'ENGAGED' if args.engage else 'dry run'}")
+
     global latest_key
     aborted = False
 
@@ -1693,6 +1911,12 @@ def main():
                 break
             print(f"\n=== rollout {ep + 1}/{args.episodes} "
                   f"({'ENGAGED' if args.engage else 'dry run'})")
+            if resetter is not None:
+                from auto_reset import cell_px
+                _lbl = _cell_of(ep)
+                print(f"    [reset] moving flower to cell {_lbl} ...")
+                resetter.run(cell_px(_lbl), park=lambda: park(start_poses)
+                             if args.engage else None)
             print(f"    parking at {start_pose!r}...")
             if args.engage:
                 park(start_poses)
@@ -1702,6 +1926,10 @@ def main():
             ## it.  Rebinding the names the tick loop already uses keeps the
             ## control path identical for both arms -- there is no second
             ## code path that could differ.
+            ## PER-EPISODE INSTRUCTION (--ask-task).  Set at the start
+            ## prompt below; falls back to the session-wide values.
+            ep_task = task_string
+            ep_target = args.target
             ab_arm = ab_label = None
             if ab is not None:
                 ab_arm = ab["plan"][ep]
@@ -1712,15 +1940,17 @@ def main():
                     ab[_other][0].reset()
                 print(f"    [A/B] scene {_scene_of(ep):02d}, "
                       f"{'second' if ep % 2 else 'first'} of the pair: "
-                      f"{ab_label}"
-                      + (f"  = arm {ab_arm.upper()}  {ckpt_dir}"
-                         if args.unblind else "  (blinded)"))
+                      f"{ab_label}  = arm {ab_arm.upper()}  {ckpt_dir}")
 
             ## The queue holds the tail of the PREVIOUS rollout's action
             ## chunk; carrying it into a fresh scene would execute actions
             ## planned for a layout that no longer exists.
             policy.reset()
 
+            if args.ask_task:
+                print(f"    type a piece {_ss.CLASS_NAMES} + ENTER to set this "
+                      f"episode's instruction, or ENTER to keep "
+                      f"{ep_target or 'the current one'!r}")
             print("    press ENTER to start, or type q + ENTER to quit"
                   "   (during the episode: p pause/resume, s end early)")
             if ref_snap_dir is not None:
@@ -1728,49 +1958,70 @@ def main():
                       f" -- place the objects until the ghosting disappears")
             latest_key = None
             _preview = None
-            while latest_key is None and not rospy.is_shutdown():
-                ## Live alignment preview while waiting for ENTER.  Costs
-                ## nothing: the control loop has not started, and the frames
-                ## come from the camera workers that are already running.
-                if snap_cameras:
-                    with frame_lock:
-                        live = {c: (latest_frames.get(c).copy()
-                                    if latest_frames.get(c) is not None else None)
-                                for c in snap_cameras}
-                    ref = (load_snapshot(ref_snap_dir, _scene_of(ep), snap_cameras)
-                           if ref_snap_dir is not None else {})
-                    _preview = alignment_view(live, ref, snap_cameras)
-                    if _preview is not None:
-                        cv2.imshow("setup", _preview)
-                        cv2.waitKey(1)
-                if args.place_grid:
-                    ## Hull-study lattice on the live top_scene, same drawing
-                    ## and same detector as place_grid.py (which cannot run
-                    ## alongside: one RealSense owner at a time).
-                    with frame_lock:
-                        _ts = latest_frames.get("top_scene")
-                        _ts = _ts.copy() if _ts is not None else None
-                    if _ts is not None:
-                        try:
+            ## --ask-task: an unrecognised word must NOT fall through and start
+            ## the episode on the previous instruction.  Typing 'floewr' once
+            ## silently ran a cube episode (2026-09-18).  Re-prompt instead.
+            _retry_task = True
+            while _retry_task and not rospy.is_shutdown():
+                _retry_task = False
+                latest_key = None
+                while latest_key is None and not rospy.is_shutdown():
+                    ## Live alignment preview while waiting for ENTER.  Costs
+                    ## nothing: the control loop has not started, and the frames
+                    ## come from the camera workers that are already running.
+                    if snap_cameras:
+                        with frame_lock:
+                            live = {c: (latest_frames.get(c).copy()
+                                        if latest_frames.get(c) is not None else None)
+                                    for c in snap_cameras}
+                        ref = (load_snapshot(ref_snap_dir, _scene_of(ep), snap_cameras)
+                               if ref_snap_dir is not None else {})
+                        _preview = alignment_view(live, ref, snap_cameras)
+                        if _preview is not None:
+                            cv2.imshow("setup", _preview)
+                            cv2.waitKey(1)
+                    if args.place_grid:
+                        ## Hull-study lattice on the live top_scene, same
+                        ## drawing and same detector as place_grid.py (which
+                        ## cannot run alongside: one RealSense owner at a time).
+                        with frame_lock:
+                            _ts = latest_frames.get("top_scene")
+                            _ts = _ts.copy() if _ts is not None else None
+                        if _ts is not None:
                             import place_grid as _pgm
                             import scene_features as _sfm
-                        except ImportError:
-                            from . import place_grid as _pgm
-                            from . import scene_features as _sfm
-                        _only = None
-                        _labels = ([c.strip() for c in args.cells.split(",")]
-                                   if args.cells else [])
-                        _grid = _pgm.cells_for(_labels)
-                        if _labels:
-                            _lab = _labels[_scene_of(ep) % len(_labels)]
-                            if _lab in {c[0] for c in _grid}:
-                                _only = _lab
-                        _img = _pgm.draw(cv2.cvtColor(_ts, cv2.COLOR_RGB2BGR),
-                                         _grid, _sfm.detect_object(_ts),
-                                         8.0, _only)
-                        cv2.imshow("placement", _img)
-                        cv2.waitKey(1)
-                time.sleep(0.05)
+                            _only = None
+                            _labels = ([c.strip() for c in args.cells.split(",")]
+                                       if args.cells else [])
+                            _grid = _pgm.cells_for(_labels)
+                            if _labels:
+                                _lab = _labels[_scene_of(ep) % len(_labels)]
+                                if _lab in {c[0] for c in _grid}:
+                                    _only = _lab
+                            _img = _pgm.draw(cv2.cvtColor(_ts, cv2.COLOR_RGB2BGR),
+                                             _grid, _sfm.detect_object(_ts),
+                                             8.0, _only)
+                            cv2.imshow("placement", _img)
+                            cv2.waitKey(1)
+                    time.sleep(0.05)
+
+                if args.ask_task and latest_key and latest_key not in ("q", ""):
+                    _pick = next((c for c in _ss.CLASS_NAMES
+                                  if c.startswith(latest_key.strip().lower())), None)
+                    if _pick is None:
+                        print(f"    [task] {latest_key!r} is not one of "
+                              f"{_ss.CLASS_NAMES}.  Type it again, ENTER to "
+                              f"keep {ep_target!r}, or q to quit.")
+                        _retry_task = True
+                    else:
+                        ep_target = _pick
+                        ep_task = _ss.task_string(_pick)
+                        ## Scoring tracks the piece you named, not the session
+                        ## default, so final_dist_target_px means the right hole.
+                        extractor = make_extractor("shape_sorter", ep_target, want)
+                        print(f"    [task] this episode: {ep_task!r}")
+                    latest_key = ""
+
             if snap_cameras:
                 try:
                     cv2.destroyWindow("setup")
@@ -1832,18 +2083,15 @@ def main():
                     canonical_branch(_w, waist_ref)
                     if waist_ref is not None else _w)
             _warm_obs, _why, _, _wf = build_observation(
-                image_keys, cameras, _warm_state, device, task=task_string,
+                image_keys, cameras, _warm_state, device, task=ep_task,
                 latest=(latest_frames if args.latest_frames else None))
             if _warm_obs is not None:
                 if env_key is not None:
-                    _ts = (_wf or {}).get("top_scene")
-                    if _ts is None:
-                        with frame_lock:
-                            _ts = latest_frames.get("top_scene")
-                            _ts = _ts.copy() if _ts is not None else None
-                    if _ts is not None:
+                    _ev, _ = env_vector(extractor, _wf, latest_frames, frame_lock,
+                                        ee_xyz=ee_xyz_now(gates, arm_names[0]))
+                    if _ev is not None:
                         _warm_obs[env_key] = (
-                            torch.from_numpy(extractor(_ts)).unsqueeze(0).to(device))
+                            torch.from_numpy(_ev).unsqueeze(0).to(device))
                         extractor.reset()
                 _t_warm = time.monotonic()
                 postprocessor(policy.select_action(preprocessor(_warm_obs)))
@@ -1891,6 +2139,9 @@ def main():
             skipped = 0
             clamp_hits = {"step": 0, "limit": 0}
             rows = []
+            _delta_prev = None
+            _reanchors = 0
+            ep_cap = float(args.seconds)      # per-episode; '+' extends it
             ended = "time"
             ros_down = False
             paused = False
@@ -1944,8 +2195,23 @@ def main():
                     time.sleep(0.05)
                     continue
 
-                if time.monotonic() - t0 >= args.seconds:
-                    print(f"    time limit ({args.seconds:g}s) reached")
+                ## EXTEND THE CLOCK from the keyboard.  A rollout that is
+                ## doing something worth watching -- a recovery, a second
+                ## grasp attempt -- should not be cut off by a cap chosen
+                ## before it started.  '+' adds --extend seconds, '+N' adds N.
+                if latest_key and latest_key.startswith("+"):
+                    _more = latest_key[1:].strip()
+                    try:
+                        _more = float(_more) if _more else float(args.extend)
+                    except ValueError:
+                        _more = float(args.extend)
+                    ep_cap += _more
+                    latest_key = None
+                    _left = ep_cap - (time.monotonic() - t0)
+                    print(f"    [time] +{_more:g}s -> cap {ep_cap:g}s "
+                          f"({_left:.0f}s left)")
+                if ep_cap > 0 and time.monotonic() - t0 >= ep_cap:
+                    print(f"    time limit ({ep_cap:g}s) reached")
                     break
                 if latest_key in ("q", "s"):
                     print(f"    stopped by operator ('{latest_key}')")
@@ -1980,7 +2246,7 @@ def main():
                         break
 
                 obs, why, sync_info, frames = build_observation(
-                    image_keys, cameras, state, device, task=task_string,
+                    image_keys, cameras, state, device, task=ep_task,
                     latest=(latest_frames if args.latest_frames else None))
                 if obs is None:
                     ## Do NOT command on a stale observation: the arm would be
@@ -1994,29 +2260,49 @@ def main():
                     continue
 
                 if env_key is not None:
-                    ## Prefer the synchronized frame when top_scene is also a
-                    ## policy camera, so the features describe the same
-                    ## instant as the image tokens; otherwise the latest.
-                    ts_img = frames.get("top_scene")
-                    if ts_img is None:
-                        with frame_lock:
-                            ts_img = latest_frames.get("top_scene")
-                            ts_img = (ts_img.copy() if ts_img is not None
-                                      else None)
-                    if ts_img is None:
+                    _ev, _why_env = env_vector(extractor, frames, latest_frames,
+                                               frame_lock,
+                                               ee_xyz=ee_xyz_now(gates, arm_names[0]))
+                    if _ev is None:
                         skipped += 1
                         if skipped in (1, 10, 100) or skipped % 250 == 0:
-                            print(f"    waiting on cameras: no top_scene "
-                                  f"frame for env-state ({skipped} ticks)")
+                            print(f"    waiting on cameras: {_why_env} "
+                                  f"({skipped} ticks)")
                         next_tick += control_dt
                         time.sleep(max(0.0, next_tick - time.monotonic()))
                         continue
-                    obs[env_key] = (torch.from_numpy(extractor(ts_img))
-                                    .unsqueeze(0).to(device))
+                    obs[env_key] = torch.from_numpy(_ev).unsqueeze(0).to(device)
+                    if args.show_env and tick % args.show_env == 0:
+                        _nm = list(getattr(extractor, "FEATURE_NAMES", []))
+                        print("    [env] t={:5.1f}s ".format(time.monotonic() - t0)
+                              + "  ".join(f"{n}={v:+.2f}" for n, v in
+                                          zip(_nm or [f"e{i}" for i in range(len(_ev))], _ev)))
 
                 action = postprocessor(policy.select_action(preprocessor(obs)))
                 action = np.asarray(
                     action.detach().float().cpu().numpy()).reshape(-1)
+
+                if delta_action:
+                    ## DELTA-ACTION CHECKPOINT: the network emitted a per-step
+                    ## displacement.  Add it onto the last command that was
+                    ## actually sent (the first tick onto the measured pose,
+                    ## exactly as build_relative_action_dataset labelled the
+                    ## first frame), gripper taken absolute.
+                    ##
+                    ## --reanchor N periodically substitutes the MEASURED
+                    ## state for that running command.  A delta stream has no
+                    ## absolute reference, so every prediction error is kept
+                    ## forever and the arm walks away from the target -- the
+                    ## 2026-09-19 rollout came close on the first attempt and
+                    ## drifted further on each retry.  Re-anchoring bounds the
+                    ## accumulation to N ticks.  It is NOT free: the measured
+                    ## pose lags the commanded one by whatever the servos are
+                    ## behind, so each re-anchor also throws that lag away.
+                    _prev = _delta_prev if _delta_prev is not None else state
+                    if reanchor and tick % reanchor == 0:
+                        _prev = state
+                        _reanchors += 1
+                    action = apply_delta(_prev, action, delta_abs_cols)
 
                 _ee_row = None
                 if ee_action:
@@ -2058,6 +2344,8 @@ def main():
                        "per_camera_age_s": sync_info.get("per_camera_age_s")}
                 if _ee_row:
                     row.update(_ee_row)
+                if env_key is not None:
+                    row["env"] = [round(float(v), 4) for v in _ev]
                 _age = sync_info.get("age_s")
                 if _age is not None and _age > 0.15 and tick % 25 == 0:
                     print(f"    [frames] STALE: policy is seeing frames "
@@ -2097,6 +2385,12 @@ def main():
                         if grip is not None:
                             command_gripper(robots[a], grip)
                     i += width
+
+                if delta_action:
+                    _delta_prev = np.concatenate([
+                        np.asarray(row[f"{a}_cmd"], dtype=np.float32).tolist()
+                        + ([row[f"{a}_gripper_cmd"]] if has_grip[a] else [])
+                        for a in arm_names]).astype(np.float32)
 
                 rows.append(row)
                 if video is not None:
@@ -2188,6 +2482,7 @@ def main():
 
             record = {
                 "episode": ep, "cell": _cell_of(ep), "checkpoint": str(ckpt_dir),
+                "reanchor": reanchor, "reanchors": _reanchors,
                 "scene_index": _scene_of(ep),
                 "ab_arm": ab_arm, "ab_label": ab_label,
                 "policy": pcfg.type, "engaged": bool(args.engage),
@@ -2255,15 +2550,14 @@ def main():
                             "scene_index": _scene_of(ep),
                             "ab_arm": ab_arm,
                             "ab_label": ab_label,
-                            "ab_blinded": (ab is not None and not args.unblind),
                             "log": str(log_path),
                             "video": (str(video.path)
                                       if video is not None else None),
                             "checkpoint": str(ckpt_dir),
                             "cameras": cameras,
                             "scene": scene,
-                            "target": args.target,
-                            "task_string": task_string,
+                            "target": ep_target,
+                            "task_string": ep_task,
                             "snapshot_dir": (str(snap_dir) if snap_dir else None),
                             "replicate_of": (str(ref_snap_dir) if ref_snap_dir else None),
                             "ended": ended,

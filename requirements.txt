@@ -147,7 +147,7 @@ kornia==0.8.2
 kornia_rs==0.1.10
 labmaze==1.0.6
 laser-geometry==1.6.8
--e git+https://github.com/huggingface/lerobot.git@86d625a97b38c2bbd8d5ece6fa3700ccc756c269#egg=lerobot
+lerobot==0.6.0
 lightning-utilities==0.15.3
 llvmlite==0.47.0
 loguru==0.7.3

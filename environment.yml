@@ -109,7 +109,7 @@ dependencies:
   - pthread-stubs=0.3
   - pugixml=1.15
   - pulseaudio-client=17.0
-  - python=3.10.20
+  - python=3.12.11
   - readline=8.3
   - sdl2=2.32.56
   - sdl3=3.2.24
@@ -261,7 +261,7 @@ dependencies:
       - kornia==0.8.2
       - kornia-rs==0.1.10
       - labmaze==1.0.6
-      - lerobot==0.1.0
+      - lerobot==0.6.0
       - lightning-utilities==0.15.3
       - llvmlite==0.47.0
       - loguru==0.7.3

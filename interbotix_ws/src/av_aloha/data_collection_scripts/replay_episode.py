@@ -52,42 +52,23 @@ try:
 except ImportError:
     rospy = None
 
-if __package__:
-    from .data_col_config import ARM_MODES, ACTION_LAYOUTS, DATASET_ROOT
-    from .arm_config import ARM_CONFIG
-    from .dataset import (
-        BackgroundEpisodeSaver,
-        quiet_libav,
-        add_camera_features,
-        build_action_names,
-        build_state_names,
-    )
-    from .robot_control import (
-        create_and_configure_robot,
-        stop_robots,
-        replay_arm_command,
-        reset_arm,
-        interpolate_to_pose,
-    )
-    from .gripper import command_gripper
-else:
-    from data_col_config import ARM_MODES, ACTION_LAYOUTS, DATASET_ROOT
-    from arm_config import ARM_CONFIG
-    from dataset import (
-        BackgroundEpisodeSaver,
-        quiet_libav,
-        add_camera_features,
-        build_action_names,
-        build_state_names,
-    )
-    from robot_control import (
-        create_and_configure_robot,
-        stop_robots,
-        replay_arm_command,
-        reset_arm,
-        interpolate_to_pose,
-    )
-    from gripper import command_gripper
+from data_col_config import ARM_MODES, ACTION_LAYOUTS, DATASET_ROOT
+from arm_config import ARM_CONFIG
+from dataset import (
+    BackgroundEpisodeSaver,
+    quiet_libav,
+    add_camera_features,
+    build_action_names,
+    build_state_names,
+)
+from robot_control import (
+    create_and_configure_robot,
+    stop_robots,
+    replay_arm_command,
+    reset_arm,
+    interpolate_to_pose,
+)
+from gripper import command_gripper
 
 
 ## How close an arm must get to the episode's first commanded pose before the
@@ -257,12 +238,8 @@ def start_replay_cameras(mode, want_cameras):
     if not want_cameras:
         return [], {}, {}, _th.Lock(), None
     try:
-        if __package__:
-            from .camera_manager import (CameraConfig, get_active_cameras,
-                                         setup_cameras)
-        else:
-            from camera_manager import (CameraConfig, get_active_cameras,
-                                        setup_cameras)
+        from camera_manager import (CameraConfig, get_active_cameras,
+                                    setup_cameras)
     except Exception as exc:
         print(f"[record] camera_manager unavailable ({exc}) -- arms only")
         return [], {}, {}, _th.Lock(), None

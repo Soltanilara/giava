@@ -13,6 +13,8 @@ the run must have been recorded with --target.
 """
 from __future__ import annotations
 
+import _giava_paths  # noqa: F401  (puts the shared giava trees on sys.path)
+
 import argparse
 import glob
 import json
@@ -24,9 +26,9 @@ import av
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
 import scene_features  # noqa: E402
 import shape_sorter  # noqa: E402
+import wrist_features  # noqa: E402
 
 KEY = "observation.environment_state"
 
@@ -41,7 +43,54 @@ class _OneHotScene:
 
 
 SCENES = {"flower": scene_features, "shape_sorter": shape_sorter,
-          "shape_sorter_onehot": _OneHotScene}
+          "shape_sorter_onehot": _OneHotScene, "wrist": wrist_features}
+
+
+def _frames(src: Path, camera: str):
+    """Decode one camera's frames in dataset row order."""
+    paths = sorted(glob.glob(
+        str(src / "videos" / f"observation.images.{camera}" / "*" / "*.mp4")))
+    if not paths:
+        raise SystemExit(f"no {camera} video under {src}")
+    for p in paths:
+        c = av.open(p)
+        for frame in c.decode(video=0):
+            yield frame.to_ndarray(format="rgb24")
+        c.close()
+
+
+def report_rank(feats: np.ndarray, names) -> int:
+    """Print the numerical rank of the feature block and name the degenerate
+    dimensions.
+
+    This exists because the original 12-d top_scene vector turned out to have
+    rank 4 -- four dimensions constant, four affine copies of another two --
+    and nothing in the pipeline noticed for two weeks of training runs.  A
+    hand-engineered feature vector should never reach a policy without this
+    check.
+    """
+    ## float64 ON PURPOSE.  The column is stored float32, and an exactly
+    ## affine relationship between dimensions leaves a residual singular value
+    ## around 0.04 at that precision -- enough to report rank 5 for a vector
+    ## whose true rank is 4.  Rank is a question about the data, not about the
+    ## storage format.
+    feats = np.asarray(feats, dtype=np.float64)
+    sd = feats.std(0)
+    const = [names[i] for i in range(len(names)) if sd[i] < 1e-9]
+    centred = feats - feats.mean(0)
+    sv = np.linalg.svd(centred, compute_uv=False)
+    rank = int((sv > sv[0] * 1e-6).sum()) if sv[0] > 0 else 0
+    print(f"\n[rank] numerical rank {rank} of {len(names)}")
+    print(f"[rank] singular values: "
+          f"{np.array2string(sv, precision=2, suppress_small=True)}")
+    if const:
+        print(f"[rank] CONSTANT dimensions (zero information): {const}")
+    if rank < len(names):
+        print(f"[rank] WARNING: {len(names) - rank} dimension(s) are linearly "
+              f"dependent -- they cost parameters and carry nothing.")
+    else:
+        print("[rank] full rank: every dimension carries independent signal.")
+    return rank
 
 
 def row_columns(pq_files):
@@ -76,29 +125,31 @@ def extract(src: Path, scene: str, episode_index: np.ndarray,
     the tracked piece follows the row's target)."""
     mod = SCENES[scene]
     n_expected = len(episode_index)
-    paths = sorted(glob.glob(
-        str(src / "videos" / "observation.images.top_scene" / "*" / "*.mp4")))
-    if not paths:
-        raise SystemExit(f"no top_scene video under {src}")
     out = np.zeros((n_expected, mod.FEATURE_DIM), dtype=np.float32)
+
+    ## The wrist scene needs two streams decoded in lockstep; every other
+    ## scene reads top_scene alone.
+    two_cams = getattr(mod, "NEEDS_TWO_CAMERAS", False)
+    if two_cams:
+        streams = zip(_frames(src, mod.CAMERAS[0]), _frames(src, mod.CAMERAS[1]))
+    else:
+        streams = ((f, None) for f in _frames(src, "top_scene"))
+
     i = 0
     ex = None
-    for p in paths:
-        c = av.open(p)
-        for frame in c.decode(video=0):
-            if i >= n_expected:
-                break
-            new_ep = i == 0 or episode_index[i] != episode_index[i - 1]
-            if targets is not None:
-                if ex is None or new_ep or ex.target != targets[i]:
-                    ex = mod.Extractor(targets[i])
-            elif ex is None:
-                ex = scene_features.Extractor()
-            elif new_ep:
-                ex.reset()
-            out[i] = ex(frame.to_ndarray(format="rgb24"))
-            i += 1
-        c.close()
+    for a, b in streams:
+        if i >= n_expected:
+            break
+        new_ep = i == 0 or episode_index[i] != episode_index[i - 1]
+        if targets is not None:
+            if ex is None or new_ep or ex.target != targets[i]:
+                ex = mod.Extractor(targets[i])
+        elif ex is None:
+            ex = mod.Extractor()
+        elif new_ep:
+            ex.reset()
+        out[i] = ex(a, b) if two_cams else ex(a)
+        i += 1
     if i != n_expected:
         raise SystemExit(f"decoded {i} frames but dataset has {n_expected}")
     return out
@@ -135,6 +186,7 @@ def main():
     feats = extract(src, args.scene, episode_index, targets)
     print(f"[features] {feats.shape}  found-rate="
           f"{feats[:, sf.FEATURE_NAMES.index('obj_found')].mean():.1%}")
+    report_rank(feats, sf.FEATURE_NAMES)
 
     ## meta + data are copied; videos are symlinked.  Root-level files
     ## (meta.json, teleop_config.json, episode_outcomes.jsonl, robustness
@@ -159,10 +211,21 @@ def main():
         ep = df["episode_index"].to_numpy()
         starts = np.flatnonzero(np.r_[True, ep[1:] != ep[:-1]])
         found_i = sf.FEATURE_NAMES.index("obj_found")
+        ## On the first frame of an episode there is no previous vector to
+        ## hold, so a miss must fall back to the scene's documented
+        ## no-detection value.  These are NOT all zero: for the wrist scene
+        ## `w_range` = 0 would mean "at grasp distance", i.e. a miss would be
+        ## encoded as a perfect grasp.  MISS_VECTOR is defined by each scene
+        ## module; the extractor already produces it (reset() clears the
+        ## hold-last carry), so this is a guard, not the primary path.
+        miss = np.asarray(getattr(sf, "MISS_VECTOR", None)
+                          if getattr(sf, "MISS_VECTOR", None) is not None
+                          else np.zeros(sf.FEATURE_DIM), dtype=np.float32)
         for s in starts:
             if block[s, found_i] == 0.0:
-                block[s, :2] = 0.0
-                block[s, 3] = 0.0
+                keep = block[s, found_i]
+                block[s] = miss
+                block[s, found_i] = keep
         df[KEY] = list(block.astype(np.float32))
         out = dst / Path(f).relative_to(src)
         out.parent.mkdir(parents=True, exist_ok=True)

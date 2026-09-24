@@ -12,15 +12,11 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.dataset_writer import DatasetWriter
 from lerobot.datasets.video_utils import StreamingVideoEncoder
 
-if __package__:
-    from .arm_config import ARM_CONFIG
-    from .data_col_config import ARM_MODES, DATASET_ROOT
-else:
-    from arm_config import ARM_CONFIG
-    from data_col_config import (
-        ARM_MODES,
-        DATASET_ROOT,
-    )
+from arm_config import ARM_CONFIG
+from data_col_config import (
+    ARM_MODES,
+    DATASET_ROOT,
+)
 
 ARM_DATASET_JOINTS = {
     arm: cfg["joint_names"]
@@ -741,10 +737,27 @@ def add_ee_features(features, active_arms):
 
     for arm in active_arms:
 
+        ## ORDER IS QUATERNION FIRST, and the names used to say otherwise.
+        ##
+        ## compute_fk_and_ee writes [qw, qx, qy, qz, x, y, z] -- the same
+        ## layout data_col_config.anchor_arm_state reads back
+        ## (`quat_wxyz = cmd_pose[:4]; pos = cmd_pose[4:]`).  These names
+        ## declared ["x","y","z","qw",...], rotated by four against the data.
+        ##
+        ## Nothing in this repo was broken by it, because every consumer
+        ## slices by INDEX -- build_eedist_dataset (`P[:, 4:7]`),
+        ## fit_px2ee (`P[i, 4:7]` / `P[i, 0:4]`), build_ee_action_dataset
+        ## (`E[i, 4:]` / `E[i, :4]`).  What it did break is anything that
+        ## trusts the declared names, which is every dataset viewer: the HF
+        ## visualizer plotted qy as "z" and the height channel as "qz", so a
+        ## descent looked like it went the wrong way (spotted 2026-09-20).
+        ##
+        ## Datasets recorded before this fix keep the old names on disk; their
+        ## DATA is unaffected and correct, so read them by index, not by name.
         features[f"observation.ee_pose.{arm}"] = {
             "dtype": "float32",
             "shape": (7,),
-            "names": ["x", "y", "z", "qw", "qx", "qy", "qz"],
+            "names": ["qw", "qx", "qy", "qz", "x", "y", "z"],
         }
     
 def build_dataset_features(mode, active_cameras):

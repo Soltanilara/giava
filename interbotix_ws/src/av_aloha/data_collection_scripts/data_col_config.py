@@ -20,24 +20,15 @@ import numpy as np
 DATASET_ROOT = str(_DATASET_ROOT)
 
 TASKS = {
-    1: "screwdriver_insertion",
-    2: "block_square",
-    3: "grasp_cube",
-    4: "transfer_flower",
-    5: "bimanual",
-    6: "active_vision",
-    7: "active_vision_data_collection",  # coupled-IK study deployment
-    ## Separate task name, NOT a second run under "transfer_flower": every
-    ## pre-July-2026 run of that task was recorded at 0.8-2.6 Hz while stamped
-    ## 15/30/50 fps (see dataset/lerobot/DEFECT_pre_2026_07_datasets.md).
-    ## Sharing a task directory would put defective and good runs side by side
-    ## under one repo_id, which is exactly how they end up pooled by accident.
-    8: "transfer_flower_v2",
-    ## Pick-and-insert into the sorter box; the per-episode TARGET piece is
-    ## carried in the frame task string (shape_sorter.task_string), so one run
-    ## can hold cube, triangle and flower episodes side by side.  Pass
-    ## --task shape_sorter --target <piece> to data_collection.py.
-    9: "shape_sorter",
+    1: "screwdriver_insertion", # used for caltrans demo (no policies trained)
+    2: "block_square", # pick up cube and insert into box (spr26)
+    3: "grasp_cube", # pick and place cube (spr26)
+    4: "transfer_flower", # pick and place blue flower block on target (spr26)
+    5: "bimanual", # for testing bimanual teleop (no policies trained)
+    6: "active_vision", # for testing active vision teleop (no policies trained)
+    7: "active_vision_data_collection",  # IK weights and costs exploration with all 3 arms
+    8: "transfer_flower_v2", # pick and place blue flower block on target with improved code (sum26)
+    9: "shape_sorter", # flower, triangle, cube insertion into box with improved code (sum26)
 }
 
 # Defines which arms are active in each mode, and the corresponding action layout.
@@ -51,6 +42,7 @@ ARM_MODES = {
     "right_av": ["right", "middle"],
     "left_av": ["left", "middle"],
 }
+
 
 ## ACTION_LAYOUTS maps a mode to WHERE each arm's command sits in the recorded
 ## action vector.  It is GENERATED, not written out, because the recorder builds
@@ -67,10 +59,7 @@ def _arm_config():
     data_collection.py is run both as a script and as part of the av_aloha
     package, and a bare absolute import breaks the package case.
     """
-    try:
-        from .arm_config import ARM_CONFIG
-    except ImportError:
-        from arm_config import ARM_CONFIG
+    from arm_config import ARM_CONFIG
     return ARM_CONFIG
 
 
@@ -99,9 +88,9 @@ def action_dim(mode):
                for a in ARM_MODES[mode])
 
 
-## Frozen expectation for the layouts that existed before generation (2026-08).
-## If ARM_CONFIG ever changes shape, this fails loudly at import rather than
-## quietly re-indexing every dataset ever recorded.
+## Frozen expectation for the layouts to ensure consistency. 
+## If ARM_CONFIG ever changes shape, the assert fails at import and 
+## can be fixed rather than quietly re-indexing every dataset.
 _FROZEN = {
     "left":     {"left_arm": slice(0, 6), "left_gripper": 6},
     "right":    {"right_arm": slice(0, 6), "right_gripper": 6},
@@ -156,8 +145,7 @@ def quat_xyzw_to_wxyz(q_xyzw):
 
 @dataclass
 class TeleopConfig:
-    # Control rate + scales, env-tunable (2026-08) so data_collection can be
-    # tuned to match teleop_debug_tool behavior without code edits:
+    # Control rate + scales can be set from command line without code edits:
     #   GIAVA_CONTROL_HZ=20  GIAVA_POS_SCALE=1.0  GIAVA_CAM_POS_SCALE=0.6
     #   GIAVA_MOVING_TIME=0.14
     # Changing the rate also rescales the IK smoothing automatically
@@ -168,15 +156,10 @@ class TeleopConfig:
     position_scale: float = field(
         default_factory=lambda: float(os.environ.get("GIAVA_POS_SCALE", "1.35"))
     )
-    ## ROTATION GAIN, the twin of position_scale.  Until 2026-09-11 there was
-    ## no such thing: translation was scaled and orientation was applied 1:1,
-    ## so turning GIAVA_POS_SCALE down to tame the arm made translation
-    ## sluggish while leaving the wrist as fast as the operator's hand --
-    ## slow where you want authority, quick where you want care.
-    ##
-    ## Scaling a rotation means scaling its ROTATION VECTOR: the axis is kept
-    ## and the angle multiplied, which is the geodesic interpolation from
-    ## identity.  Default 1.0, so nothing changes unless asked.
+    # Added a rotation scale in addition to translation scale.
+    # Scaling a rotation means scaling its ROTATION VECTOR: the axis is kept
+    # and the angle multiplied, which is the geodesic interpolation from
+    # identity.  Default 1.0, so nothing changes unless asked.
     rotation_scale: float = field(
         default_factory=lambda: float(os.environ.get("GIAVA_ROT_SCALE", "1.0"))
     )
@@ -189,27 +172,21 @@ class TeleopConfig:
     )
     accel_time: float = 0.04
     max_ee_step: float = 0.02
-    ## Per-tick ANGULAR step ceiling, the twin of max_ee_step (0.02 m/tick,
-    ## i.e. 1 m/s at 50 Hz).  Nothing bounded angular rate at all: the only
-    ## thing standing between a flicked wrist and the servos was the driver
-    ## clamp.  In rad/tick -- 0.04 at 50 Hz is 2 rad/s, about 115 deg/s.
-    ##
-    ## DEFAULT 0 = OFF, deliberately.  A clamp that silently trimmed fast
-    ## motions would make new demonstrations differ from the ones already
-    ## recorded, so this is opt-in via GIAVA_MAX_EE_ANG_STEP.
+    # Also added per-tick ANGULAR step ceiling like max_ee_step (0.02 m/tick,
+    # i.e. 1 m/s at 50 Hz).  
+    # DEFAULT 0 = OFF, deliberately.  A clamp that silently trimmed fast
+    # motions would make new demonstrations differ from the ones already
+    # recorded, so this is opt-in via GIAVA_MAX_EE_ANG_STEP.
     max_ee_ang_step: float = field(
         default_factory=lambda: float(os.environ.get("GIAVA_MAX_EE_ANG_STEP", "0"))
     )
-    pos_weight: float = 40.0
-    ori_weight: float = 0.25
-    dq_weight: float = 0.18
     joint_reached_tol: float = 0.03
     ee_reached_tol: float = 0.01
     cmd_timeout: float = 0.25
     full_joint_velocity_limits_value: float = 2.3
 
     # Post-solve per-joint step clamp.  DISABLED to match the ik_study
-    # conditions: the study's winner was validated with no clamp, no LPF and no
+    # conditions: the study's winner was validated with no clamp and no
     # reseed, and a saturating clamp creates the acceleration discontinuities it
     # is meant to prevent (the solver never learns its command was truncated).
     #
@@ -217,7 +194,7 @@ class TeleopConfig:
     # penalty on deviation from the previous configuration -- it makes large
     # steps expensive, it does not make them impossible.  With this off, an IK
     # discontinuity goes straight to the motors.  Re-enable with
-    # GIAVA_ENABLE_JOINT_CLAMP=1 if the arms move harder than you expect.
+    # GIAVA_ENABLE_JOINT_CLAMP=1 if the arms move faster than you expect.
     enable_joint_clamp: bool = field(
         default_factory=lambda: os.environ.get("GIAVA_ENABLE_JOINT_CLAMP", "0") == "1"
     )
@@ -225,72 +202,22 @@ class TeleopConfig:
     # Driver-feasibility clamp (separate from the tuning clamp above, and ON by
     # default).  interbotix's `check_joint_limits` rejects the WHOLE group
     # command if any joint fails, so a single infeasible joint freezes the arm
-    # completely -- it does not clip, it refuses.  Its test is
+    # completely. Instead of clipping, it refuses.  Its test is
     #     |goal - last_command| / moving_time  >  joint_velocity_limit
     # so the largest command it will accept is  vl * moving_time  per tick.
     # Clamping to just under that keeps every command executable while leaving
     # far more headroom than the old tuning clamp (0.05-0.10 rad).
     enable_driver_clamp: bool = True
 
-    ## WHICH PROFILE THE SERVOS ARE RUNNING, and what that makes the clamp
-    ## mean.  DEFAULT IS "legacy": today's numbers exactly, so nothing changes
-    ## under a recording session.
-    ##
-    ##   GIAVA_PROFILE_MODE=velocity  (default) driver_max_step = v_cap *
-    ##                                control_dt, i.e. how far the servo can
-    ##                                actually travel in ONE TICK at its
-    ##                                firmware speed cap.  With v_cap =
-    ##                                3.36 rad/s and dt = 0.02 s that is
-    ##                                0.067 rad.  The goal then never sits more
-    ##                                than one tick ahead of the arm, so
-    ##                                tracking error stays small and bounded.
-    ##
-    ##   GIAVA_PROFILE_MODE=legacy    driver_max_step = driver_clamp_safety *
-    ##                                driver_velocity_limit * moving_time =
-    ##                                0.9*3.14159*0.14 = 0.396 rad.  TIME-BASED
-    ##                                arithmetic: "how far can the arm travel in
-    ##                                one moving_time at the velocity limit".
-    ##                                Only correct if the servos really are
-    ##                                running a time-based profile.
-    ##
-    ##   GIAVA_PROFILE_MODE=auto      read Drive_Mode off the motors at startup
-    ##                                and pick. It needs the bus up before the
-    ##                                config is built, so the control loop calls
-    ##                                apply_profile_limits().
-    ##
-    ## WHY THE DEFAULT CHANGED (2026-09-09).  It was "legacy" -- time-based
-    ## arithmetic -- while all three puppet_modes_*.yaml set
-    ## `profile_type: velocity`.  Under a velocity-based profile Drive_Mode
-    ## bit 2 is clear, so the Profile_Velocity the interbotix layer writes
-    ## (moving_time*1000 = 140) is NOT 140 ms; it is 140 * 0.229 rev/min, a
-    ## 3.36 rad/s SPEED CAP.  The loop was therefore allowed 0.396 rad/tick
-    ## against a servo that can execute 0.067 -- a 5.9x gap, with the
-    ## commanded goal outrunning the arm by ~16 rad/s.
-    ##
-    ## That is not a tuning preference, it is a runaway: tracking error grows
-    ## without bound until the watchdog trips at TRIP_RAD (0.7 rad), while the
-    ## joint chases its goal at stall current until the motor latches an
-    ## overload and shuts its own torque off.  Recorded on hardware as
-    ## middle_base peaking at 2095 mA (limit ~2300) and then sitting at zero
-    ## effort, frozen, while the command walked 48 degrees away -- and the
-    ## wedged bus stalling the 50 Hz loop for up to 1.65 s, which is what took
-    ## the arms, the headset control and the camera stream down together.
-    ## Confirmed the other way on 2026-09-09: a session run with "velocity"
-    ## behaved markedly better.
-    ##
-    ## The cost of the default is that the largest single-tick command is ~6x
-    ## smaller, which IS a real change in feel.  GIAVA_PROFILE_MODE=legacy
-    ## restores the old numbers exactly if a session needs to match older
-    ## recordings -- but note the old numbers are the ones that latched the
-    ## overloads.
-    ##
-    ## If the registers cannot be read, driver_max_step below falls back to
-    ## driver_velocity_limit (0.9*3.14159*0.02 = 0.057 rad/tick) rather than
-    ## the measured cap.  That is tighter than the truth, not looser, which is
-    ## the right direction to fail in.
+    # Default profile has been set to velocity to allow for smooth motion but legacy
+    # is available for to restore the old numbers exactly if a session needs to match older
+    # recordings.
+    # If the registers cannot be read, driver_max_step below falls back to
+    # driver_velocity_limit (0.9*3.14159*0.02 = 0.057 rad/tick) rather than
+    # the measured cap.  That is tighter than the truth, not looser, which is
+    # the right direction to fail in.
     profile_mode: str = field(
-        default_factory=lambda: os.environ.get(
-            "GIAVA_PROFILE_MODE", "velocity").strip().lower()
+        default_factory=lambda: os.environ.get("GIAVA_PROFILE_MODE", "velocity").strip().lower()
     )
     ## Measured firmware speed cap [rad/s], filled in by apply_profile_limits()
     ## when the registers are readable.  None = never read.
@@ -395,7 +322,8 @@ class TeleopConfig:
         default_factory=lambda: float(os.environ.get("GIAVA_CAM_MAX_EE_STEP", "0.05"))
     )
 
-# State for each arm during teleoperation, tracking the initial controller and robot poses, as well as a filtered target position for smooth motion.
+# State for each arm during teleoperation, tracking the initial controller and robot poses, 
+# as well as a filtered target position for smooth motion.
 @dataclass
 class ArmTeleopState:
     active: bool = False
@@ -430,13 +358,10 @@ class CommandKinematicsState:
     q_cmd: Optional[np.ndarray] = None
     T_cmd: dict[str, np.ndarray] = field(default_factory=dict)
 
-# Initializes the teleoperation session state for the active arms based on the current controller poses and commanded kinematics.
-## session_yaw_remap and HEAD_LOCAL_FWD live in transform_utils (the shared
-## frame-math helper) and are re-exported here for the teleop call sites.
-try:
-    from .transform_utils import HEAD_LOCAL_FWD, session_yaw_remap  # noqa: F401
-except ImportError:
-    from transform_utils import HEAD_LOCAL_FWD, session_yaw_remap  # noqa: F401
+# Initializes the teleoperation session state for the active arms based on the current controller poses 
+# and commanded kinematics. session_yaw_remap and HEAD_LOCAL_FWD live in transform_utils (the shared
+# frame-math helper) and are re-exported here for the teleop call sites.
+from transform_utils import HEAD_LOCAL_FWD, session_yaw_remap  # noqa: F401
 
 
 def anchor_arm_state(state_arm, controller_pose, cmd_pose, head_pose=None, base_remap=None):
@@ -853,98 +778,3 @@ class LinkGuard:
 ## compiled solver is specialised to.
 _STUDY_IK_CACHE = {}
 _STUDY_IK_NOTICE = [False]
-
-
-def solve_single_arm_ik(
-    robot,
-    target_link_name,
-    target_position,
-    target_wxyz,
-    prev_q,
-    dt,
-    joint_velocity_limits=None,
-    pos_weight=None,
-    ori_weight=None,
-    dq_weight=None,
-):
-    """One arm's target, solved by the DEPLOYED study solver.
-
-    Was: a bare pyroki_snippets pose solve at pos 40 / ori 0.25 / dq 0.18, with
-    no collision term of any kind.  That configuration predates the ik_study
-    and disagrees with what data_collection.py actually runs, so a script that
-    reached for it got measurably different motion from the one the study
-    validated -- and no self-collision avoidance at all, which on a three-arm
-    rig is not a tuning difference.
-
-    Now: `study_ik.build_study_ik`, i.e. pos 50 / ori 10 (10/25 for the camera
-    arm), smoothing 0.05, centering 0.5, 180-sphere self-collision at margin
-    20 mm / weight 100, iteration cap 20.  No manipulability term (the study
-    found none needed) and no post-solve smoothing or reseeding (the winner
-    was validated without them, and a saturating post-filter creates the
-    acceleration discontinuities it is meant to remove).
-
-    COORDINATES: prev_q and the return value are DRIVER joints, matching
-    CoupledStudyIK.  For left/right-only callers that is identical to the URDF
-    frame; only the middle waist differs, and a middle-arm caller that has a
-    nonzero Homing_Offset should build the solver itself and pass
-    waist_driver_shift.
-
-    THE OTHER TWO ARMS still take part -- they hold whatever `prev_q` says they
-    are at, and the collision cost sees them.  Seed prev_q with the real
-    measured joints of every arm, not just the one being driven, or the solver
-    avoids a phantom and ignores the arm that is there.
-
-    `joint_velocity_limits`, `pos_weight`, `ori_weight` and `dq_weight` are
-    accepted and IGNORED: the study's weights are the whole point of routing
-    through it, and silently honouring a caller's pos 40 would reintroduce
-    exactly the divergence this replaced.  They stay in the signature so
-    existing call sites keep working; a warning names any that were passed.
-
-    Prefer `study_ik.build_study_ik(robot)` directly in new code -- holding the
-    solver makes its one-off compile visible where it belongs (at startup)
-    rather than inside the first control tick."""
-    try:
-        from .study_ik import build_study_ik
-    except ImportError:
-        from study_ik import build_study_ik
-
-    if not _STUDY_IK_NOTICE[0]:
-        _STUDY_IK_NOTICE[0] = True
-        passed = [n for n, v in (("pos_weight", pos_weight),
-                                 ("ori_weight", ori_weight),
-                                 ("dq_weight", dq_weight),
-                                 ("joint_velocity_limits", joint_velocity_limits))
-                  if v is not None]
-        print("[ik] solve_single_arm_ik now routes through the deployed study "
-              "solver (collision included).")
-        if passed:
-            print(f"[ik]   ignoring caller weights: {', '.join(passed)} -- see "
-                  "study_ik.py for the deployed values and their env overrides")
-
-    key = id(robot)
-    ik = _STUDY_IK_CACHE.get(key)
-    if ik is None:
-        print("[ik] compiling the study solver (a few seconds; build it at "
-              "startup with study_ik.build_study_ik to avoid stalling a "
-              "control loop)...")
-        ik = build_study_ik(robot, control_dt=float(dt))
-        _STUDY_IK_CACHE[key] = ik
-
-    ## Which arm the target belongs to is decided by the EE LINK, not by an
-    ## extra argument, so a caller cannot name one arm and pass another's link.
-    try:
-        from .arm_config import ARM_CONFIG as _AC
-    except ImportError:
-        from arm_config import ARM_CONFIG as _AC
-    arm = next((a for a in ("left", "right", "middle")
-                if _AC[a]["ee_link"] == target_link_name), None)
-    if arm is None:
-        raise ValueError(
-            f"'{target_link_name}' is not any arm's ee_link "
-            f"({[_AC[a]['ee_link'] for a in ('left', 'right', 'middle')]}). "
-            f"The study solver tracks the configured end effectors; to track "
-            f"a different link, change arm_config.ARM_CONFIG.")
-
-    return ik.solve(np.asarray(prev_q, dtype=float),
-                    {arm: (np.asarray(target_position, dtype=float),
-                           np.asarray(target_wxyz, dtype=float))})

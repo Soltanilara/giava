@@ -164,6 +164,17 @@ def select_table(argv: Optional[List[str]] = None) -> bool:
     enabled = "1" if val == "on" else "0"
     os.environ.setdefault("GIAVA_IK_TABLE_ENABLE", enabled)
     os.environ.setdefault("GIAVA_TABLE_GATE", enabled)
+    ## THE TABLE GATE IS THE ONE THAT ACTUALLY FIRES.  Inter-arm blocks are
+    ## rare in single-arm work; table blocks with a fingertip limiter are
+    ## routine.  And the failure it prevents -- a gripper driven into the
+    ## tabletop through a 353:1 non-backdrivable gearbox -- does not give way,
+    ## it stalls and heats.  --table off exists for solver benchmarking; say so
+    ## out loud rather than letting a stale shell variable disarm it silently.
+    if enabled == "0":
+        print("[table] WARNING: tabletop gate DISABLED (--table off / "
+              "GIAVA_TABLE=off). Nothing stops a command that drives the "
+              "gripper into the table. Benchmarking only -- do not collect "
+              "or roll out like this.")
     os.environ["GIAVA_TABLE"] = val
     return val == "on"
 

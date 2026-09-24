@@ -158,7 +158,8 @@ PI0_BASE = {"pi0": "lerobot/pi0", "pi05": "lerobot/pi05_base"}
 def build_policy_config(policy, fps, input_features, output_features,
                         init_from=None, dtype=None,
                         gradient_checkpointing=False,
-                        train_vision_encoder=False):
+                        train_vision_encoder=False,
+                        chunk_size=None, n_action_steps=None):
     if init_from is not None:
         from lerobot.configs.policies import PreTrainedConfig
         from lerobot.policies.factory import make_policy_config  # noqa: F401  registers types
@@ -259,12 +260,21 @@ def build_policy_config(policy, fps, input_features, output_features,
         ## ~2 seconds of actions per chunk, the ALOHA-validated horizon,
         ## expressed in this dataset's own ticks so a 25 Hz and a 50 Hz
         ## dataset both predict the same wall-clock span.
-        chunk = max(20, int(round(2.0 * fps)))
+        chunk = chunk_size or max(20, int(round(2.0 * fps)))
+        ## n_action_steps == chunk_size means the chunk is executed fully
+        ## open-loop.  That is fine for ABSOLUTE actions but wrong for a
+        ## delta-action dataset, where each predicted step is integrated onto
+        ## the last: 100 integrated deltas drift badly.  --n-action-steps lets
+        ## a delta run re-plan often while keeping the same prediction horizon.
+        n_act = n_action_steps or chunk
+        if n_act > chunk:
+            raise SystemExit(
+                f"--n-action-steps {n_act} cannot exceed --chunk-size {chunk}")
         return ACTConfig(
             input_features=input_features,
             output_features=output_features,
             chunk_size=chunk,
-            n_action_steps=chunk,
+            n_action_steps=n_act,
             push_to_hub=False,
         )
 
@@ -344,6 +354,15 @@ def main():
                     help="pi0/pi05 only: recompute activations in the "
                          "backward pass -- slower per step, much less "
                          "activation memory.")
+    ap.add_argument("--chunk-size", type=int, default=None, metavar="N",
+                    help="ACT action-chunk length in ticks (default: 2 s at "
+                         "the dataset's fps, i.e. 100 at 50 Hz)")
+    ap.add_argument("--n-action-steps", type=int, default=None, metavar="N",
+                    help="how many of the predicted chunk to execute before "
+                         "re-planning (default: the whole chunk, fully "
+                         "open-loop).  REQUIRED to be well below --chunk-size "
+                         "for a delta-action dataset -- integrating 100 "
+                         "predicted deltas open-loop drifts.  Try 20.")
     ap.add_argument("--steps", type=int, default=100_000)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--num-workers", type=int, default=4)
@@ -415,7 +434,8 @@ def main():
         args.policy, fps, input_features, output_features, args.init_from,
         dtype=args.policy_dtype,
         gradient_checkpointing=args.gradient_checkpointing,
-        train_vision_encoder=args.train_vision_encoder)
+        train_vision_encoder=args.train_vision_encoder,
+        chunk_size=args.chunk_size, n_action_steps=args.n_action_steps)
     if args.init_from:
         print(f"  fine-tuning from {args.init_from}")
 

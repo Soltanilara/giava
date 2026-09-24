@@ -566,10 +566,7 @@ def run_standalone(mode="both", fps=None, scale=None):
     it -- use --preview there instead."""
     import cv2
 
-    if __package__:
-        from .camera_manager import setup_oak_stereo, oak_dataset_view, OAK_SWAP_EYES
-    else:
-        from camera_manager import setup_oak_stereo, oak_dataset_view, OAK_SWAP_EYES
+    from camera_manager import setup_oak_stereo, oak_dataset_view, OAK_SWAP_EYES
 
     mode = _normalize(mode) or "both"
     if mode == "off":

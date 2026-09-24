@@ -77,10 +77,7 @@ except ImportError as exc:  # pragma: no cover - environment problem, not logic
         "Guided-Vision/python. Set GVLINK_PATH to that directory."
     ) from exc
 
-if __package__:
-    from .headset_utils import HeadsetData, HeadsetFeedback, convert_left_to_right_coordinates
-else:
-    from headset_utils import HeadsetData, HeadsetFeedback, convert_left_to_right_coordinates
+from headset_utils import HeadsetData, HeadsetFeedback, convert_left_to_right_coordinates
 
 
 def _env_float(name: str, default: float) -> float:

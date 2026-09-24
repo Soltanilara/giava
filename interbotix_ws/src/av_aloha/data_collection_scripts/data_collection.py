@@ -9,20 +9,12 @@ import threading
 ## are imported below: both read their configuration from the environment
 ## at module import, so setting it later would silently do nothing while
 ## the startup banner claimed otherwise. See collision_modes.py.
-try:
-    from .collision_modes import banner as _collision_banner
-    from .collision_modes import select as _collision_select
-    from .collision_modes import select_table as _table_select
-    from .jax_platform import select as _jax_select
-    from .oak_preview import select as _preview_select
-    from .collision_modes import take_option as _take_option
-except ImportError:
-    from collision_modes import banner as _collision_banner
-    from collision_modes import select as _collision_select
-    from collision_modes import select_table as _table_select
-    from jax_platform import select as _jax_select
-    from oak_preview import select as _preview_select
-    from collision_modes import take_option as _take_option
+from collision_modes import banner as _collision_banner
+from collision_modes import select as _collision_select
+from collision_modes import select_table as _table_select
+from jax_platform import select as _jax_select
+from oak_preview import select as _preview_select
+from collision_modes import take_option as _take_option
 COLLISION_MODE = _collision_select()
 TABLE_MODE = _table_select()
 ## `--preview [left|right|both]` / GIAVA_OAK_PREVIEW, resolved HERE for the
@@ -112,184 +104,90 @@ try:
 except ImportError:
     rospy = None
 
-if __package__:
-    from .headset_link import make_headset
-    from .arm_config import ARM_CONFIG, POSES, URDF_PATH
-    try:
-        from .study_ik import COLLISION_MARGIN, CoupledStudyIK
-    except ImportError:
-        CoupledStudyIK = None
-    from .oak_preview import OakPreview
-    from .waist_travel import WaistTravel
-    from .camera_manager import (
-        adjust_eye_view,
-        SYNC_FRAMES,
-        select_synchronized_frames,
-        CameraConfig,
-        CAMERA_SERIALS,
-        CAMERA_INTRINSICS,
-        REQUIRE_CALIBRATION,
-        save_camera_intrinsics,
-        setup_cameras,
-        get_active_cameras,
-        join_camera_workers,
-    )
-    from .robot_control import (
-        apply_profile_limits,
-        create_and_configure_robots,
-        build_robot_model,
-        quiet_solver_logs,
-        solver_log_summary,
-        get_pose,
-        move_to_named_pose,
-        move_to_named_poses,
-        resolve_middle_waist_shift,
-        reset_arms,
-        compute_fk_and_ee,
-        sync_robot_state,
-        command_state_is_stale
-    )
-    from .servo_health import (
-        FaultRecorder,
-        OverloadEstimator,
-        StallGate,
-        ServoWatchdog,
-    )
-    from .servo_health import check_profile as servo_check_profile
-    from .servo_health import check_shadows as servo_check_shadows
-    from .servo_health import decode as servo_decode
-    from .servo_health import read_hardware_errors as servo_read_errors
-    from .servo_health import recover as servo_recover
-    from .servo_health import report as servo_report
-    from .gripper import (GRIPPER_MODE, GRIPPER_CLOSED, GRIPPER_OPEN,
-                              command_gripper, update_gripper,
-                              update_gripper_from_trigger)
-    from .dataset import (
-        BackgroundEpisodeSaver,
-        quiet_libav,
-        create_dataset,
-        resolve_resume_run,
-        build_frame,
-    )
-    from .data_col_config import (
-        anchor_arm_state,
-        session_yaw_remap,
-        TASKS,
-        ARM_MODES,
-        ArmTeleopState,
-        TeleopConfig,
-        TeleopSessionState,
-        RobotCommandState,
-        CommandKinematicsState,
-        LinkGuard,
-        compute_camera_arm_target,
-        compute_gripper_arm_target,
-        start_teleop_session,
-        stop_teleop_session,
-        clamp_joint_step,
-        ControllerJumpGate,
-        MAX_ENGAGE_S,
-    )
-    from .log import (
-        SessionStats,
-        reset_episode_log,
-        log_episode_info,
-        write_episode_robustness,
-        write_session_config,
-    )
-else:
-    from headset_link import make_headset
+from headset_link import make_headset
 
-    from arm_config import ARM_CONFIG, POSES, URDF_PATH
-    try:
-        from study_ik import COLLISION_MARGIN, CoupledStudyIK
-    except ImportError:
-        CoupledStudyIK = None
-    from oak_preview import OakPreview
-    from waist_travel import WaistTravel
-    from camera_manager import (
-        adjust_eye_view,
-        SYNC_FRAMES,
-        select_synchronized_frames,
-        CameraConfig,
-        CAMERA_SERIALS,
-        CAMERA_INTRINSICS,
-        REQUIRE_CALIBRATION,
-        save_camera_intrinsics,
-        setup_cameras,
-        get_active_cameras,
-        join_camera_workers,
-    )
-    from robot_control import (
-        apply_profile_limits,
-        create_and_configure_robots,
-        build_robot_model,
-        quiet_solver_logs,
-        solver_log_summary,
-        get_pose,
-        move_to_named_pose,
-        move_to_named_poses,
-        resolve_middle_waist_shift,
-        reset_arms,
-        compute_fk_and_ee,
-        sync_robot_state,
-        command_state_is_stale
-    )
-    from servo_health import (
-        FaultRecorder,
-        OverloadEstimator,
-        StallGate,
-        ServoWatchdog,
-    )
-    from servo_health import check_profile as servo_check_profile
-    from servo_health import check_shadows as servo_check_shadows
-    from servo_health import decode as servo_decode
-    from servo_health import read_hardware_errors as servo_read_errors
-    from servo_health import recover as servo_recover
-    from servo_health import report as servo_report
-    from gripper import (GRIPPER_MODE, GRIPPER_CLOSED, GRIPPER_OPEN,
-                              command_gripper, update_gripper,
-                              update_gripper_from_trigger)
-    from dataset import (
-        BackgroundEpisodeSaver,
-        quiet_libav,
-        create_dataset,
-        resolve_resume_run,
-        build_frame,
-    )
-    from data_col_config import (
-        anchor_arm_state,
-        session_yaw_remap,
-        TASKS,
-        ARM_MODES,
-        ArmTeleopState,
-        TeleopConfig,
-        TeleopSessionState,
-        RobotCommandState,
-        CommandKinematicsState,
-        LinkGuard,
-        compute_camera_arm_target,
-        compute_gripper_arm_target,
-        start_teleop_session,
-        stop_teleop_session,
-        clamp_joint_step,
-        ControllerJumpGate,
-        MAX_ENGAGE_S,
-    )
-    from log import (
-        SessionStats,
-        reset_episode_log,
-        log_episode_info,
-        write_episode_robustness,
-        write_session_config,
-    )
-
-
-# quat2mat / pose2mat come from transform_utils (same math; one home).
+from arm_config import ARM_CONFIG, POSES, URDF_PATH
 try:
-    from .transform_utils import pose2mat, quat2mat  # noqa: F401
+    from study_ik import COLLISION_MARGIN, CoupledStudyIK
 except ImportError:
-    from transform_utils import pose2mat, quat2mat  # noqa: F401
+    CoupledStudyIK = None
+from oak_preview import OakPreview
+from waist_travel import WaistTravel
+from camera_manager import (
+    adjust_eye_view,
+    SYNC_FRAMES,
+    select_synchronized_frames,
+    CameraConfig,
+    CAMERA_SERIALS,
+    CAMERA_INTRINSICS,
+    save_camera_intrinsics,
+    setup_cameras,
+    get_active_cameras,
+    join_camera_workers,
+)
+from robot_control import (
+    apply_profile_limits,
+    create_and_configure_robots,
+    build_robot_model,
+    quiet_solver_logs,
+    get_pose,
+    move_to_named_pose,
+    move_to_named_poses,
+    resolve_middle_waist_shift,
+    reset_arms,
+    compute_fk_and_ee,
+    sync_robot_state,
+    command_state_is_stale
+)
+from servo_health import (
+    FaultRecorder,
+    OverloadEstimator,
+    StallGate,
+    ServoWatchdog,
+)
+from servo_health import check_profile as servo_check_profile
+from servo_health import check_shadows as servo_check_shadows
+from servo_health import decode as servo_decode
+from servo_health import read_hardware_errors as servo_read_errors
+from servo_health import recover as servo_recover
+from servo_health import report as servo_report
+from gripper import (GRIPPER_MODE, GRIPPER_CLOSED, GRIPPER_OPEN,
+                          command_gripper, update_gripper,
+                          update_gripper_from_trigger)
+from dataset import (
+    BackgroundEpisodeSaver,
+    quiet_libav,
+    create_dataset,
+    resolve_resume_run,
+    build_frame,
+)
+from data_col_config import (
+    anchor_arm_state,
+    session_yaw_remap,
+    TASKS,
+    ARM_MODES,
+    ArmTeleopState,
+    TeleopConfig,
+    TeleopSessionState,
+    RobotCommandState,
+    CommandKinematicsState,
+    LinkGuard,
+    compute_camera_arm_target,
+    compute_gripper_arm_target,
+    start_teleop_session,
+    stop_teleop_session,
+    clamp_joint_step,
+    ControllerJumpGate,
+    MAX_ENGAGE_S,
+)
+from log import (
+    SessionStats,
+    reset_episode_log,
+    log_episode_info,
+    write_episode_robustness,
+    write_session_config,
+)
+from transform_utils import pose2mat, quat2mat  # noqa: F401
 
 latest_frames = {
     name: {"color": None, "depth": None} for name in CAMERA_SERIALS
@@ -300,11 +198,6 @@ latest_timestamps = {
 frame_lock = threading.Lock()
 camera_shutdown = threading.Event()
 latest_key = None
-
-## NOTE: scene cameras are chosen in main() from --scene-cams / GIAVA_SCENE_CAMS.
-## A module-level CameraConfig used to sit here hardcoded to both-on; it was dead
-## (main() rebinds the name before get_active_cameras ever sees it) but it read
-## like the live setting, which is worse than not being there.
 
 def keyboard_listener():
     global latest_key
@@ -334,17 +227,6 @@ def mark_episode_discarded(dataset_root, episode_idx):
     with open(discard_file, "a") as f:
         f.write(f"{episode_idx}\n")
 
-## CANONICAL POSE SHORTCUTS, deliberately FIXED rather than derived from
-## whichever poses the current --mode happens to share.
-##
-## The alternative -- shortest-unique-prefix over the available names -- makes
-## the same keystroke mean different things in different modes: 'f' is
-## unambiguous in --mode right (forward/high/rest/low) but ambiguous in --mode
-## middle, which also has far_scene.  These keys are typed at a live robot
-## with the arms energised; a key whose meaning depends on a flag typed twenty
-## minutes ago is a key that will eventually drive an arm somewhere the
-## operator did not intend.  So f/h/r/l always mean the same four poses, and
-## everything else is spelled out.
 POSE_SHORTCUTS = {"f": "forward", "h": "high", "r": "rest", "l": "low",
                   "m": "med"}
 
@@ -404,10 +286,7 @@ def park_arms(robots, arm_names, spec):
     """All active arms to the pose(s) named by `spec`, one simultaneous ramp
     (robot_control.move_arms_together), so a per-arm spec is as smooth as a
     shared pose name."""
-    try:
-        from .robot_control import get_pose, move_arms_together
-    except ImportError:
-        from robot_control import get_pose, move_arms_together
+    from robot_control import get_pose, move_arms_together
     poses = parse_pose_spec(spec, arm_names)
     targets = {a: get_pose(a, poses[a]) for a in arm_names}
     return move_arms_together({a: robots[a] for a in arm_names}, targets)
@@ -590,7 +469,7 @@ def main():
     quiet_libav()
     ## Before the URDF is parsed: pyroki logs through loguru at INFO and its
     ## default sink writes coloured lines straight to stderr.  Warnings still
-    ## print; solver_log_summary() below says how much was hidden.
+    ## print.
     quiet_solver_logs()
 
     rospy.init_node("data_collection")
@@ -604,33 +483,8 @@ def main():
 
     stats = SessionStats()
 
-    # # Print tasks and get selection
-    # print("\nAVAILABLE TASKS:\n")
-    # for idx, name in TASKS.items():
-    #     print(f"{idx}: {name}")
-
-    # while True:
-    #     try:
-    #         task_idx = int(input("\nSelect task number: ").strip())
-    #         if task_idx not in TASKS:
-    #             print("Invalid task number. Try again.")
-    #             continue
-    #         break
-    #     except ValueError:
-    #         print("Please enter an integer task number.")
-
-    ## --task picks the dataset directory (a name from TASKS).  For the
-    ## shape_sorter task, --target names the piece being inserted; it becomes
-    ## the per-FRAME task string (shape_sorter.task_string), which is how one
-    ## run holds cube, triangle and flower episodes side by side and how the
-    ## env-state builder later knows which piece each episode is about.
-    ## `target <piece>` at the prompt switches it between episodes.
-    try:
-        from .collision_modes import take_option as _take_option
-        from . import shape_sorter as _ss
-    except ImportError:
-        from collision_modes import take_option as _take_option
-        import shape_sorter as _ss
+    from collision_modes import take_option as _take_option
+    import shape_sorter as _ss
     task_name = str(_take_option("task", default=TASKS[7])).strip()
     if task_name not in TASKS.values():
         raise SystemExit(
@@ -713,29 +567,7 @@ def main():
         for _i, _pm in enumerate(task_ctx["perms"]):
             print(f"    round {_i + 1}: " + " -> ".join(_pm))
 
-    # # Print modes and get selection
-    # print("\nAVAILABLE MODES:\n")
-    # for mode, arm_names in ARM_MODES.items():
-    #     print(f"{mode}: {arm_names}")
-
-    # while True:
-    #     try:
-    #         mode = input("\nSelect mode: ").strip()
-    #         if mode not in ARM_MODES:
-    #             print("Invalid mode. Try again.")
-    #             continue
-    #         break
-    #     except ValueError:
-    #         print("Please enter one of the listed modes.")
-
-    ## --mode selects which arms are active.  Default "all" (all three) is
-    ## the coupled-IK study deployment; "right_av"/"left_av" are one
-    ## manipulator plus the camera arm.  Consumed from argv the same way
-    ## --collision is, so the positional episode index still works.
-    try:
-        from .collision_modes import take_option as _take_option
-    except ImportError:
-        from collision_modes import take_option as _take_option
+    from collision_modes import take_option as _take_option
     mode = str(_take_option("mode", default="all")).strip().lower()
     if mode not in ARM_MODES:
         raise SystemExit(
@@ -781,49 +613,6 @@ def main():
                 f"--start-pose: {_a} has no pose {_p!r}. Available for {_a}: "
                 f"{sorted(POSES[_a])}")
 
-    # # Print modes and get selection
-    # print("\nWhich scene cameras to activate?\nEnter l for low and t for top (e.g. 'lt' for both, 'l' for low only, 't' for top only):")
-
-    # while True:
-    #     try:
-    #         camera_selection = input().strip()
-    #         if not camera_selection:
-    #             print("Invalid selection. Try again.")
-    #             continue
-    #         break
-    #     except ValueError:
-    #         print("Please enter a valid selection.")
-
-    ## WHICH SCENE CAMERAS ARE RECORDED, from the environment rather than from
-    ## an edit made before the session and forgotten.  GIAVA_* variables are
-    ## snapshotted into the run's teleop_config.json, so this way the camera
-    ## set is recorded WITH the dataset; a hardcoded value is not.
-    ##
-    ##   GIAVA_SCENE_CAMS=none      (default) wrist camera(s) + OAK only
-    ##   GIAVA_SCENE_CAMS=top,low   both scene cameras -- the historical default
-    ##   GIAVA_SCENE_CAMS=low       low scene only
-    ##
-    ## Wrist cameras are deliberately NOT selectable here: get_active_cameras
-    ## ties them to the arm mode, because a wrist camera without its arm is
-    ## meaningless.  The OAKs likewise follow the middle arm.
-    ##
-    ## WHY THE DEFAULT IS NOW 'none' (2026-09-09).  Each scene camera is a
-    ## 640x480x60 fps RealSense with a capture thread, a per-frame copy and a
-    ## history deque in THIS process, and every recorded tick copies its frame
-    ## again under frame_lock.  Two of them are pure overhead on a control loop
-    ## that is already over budget, and they contribute nothing to a session
-    ## driven from the headset through the OAK.  Turned off, the loop has two
-    ## fewer producers competing for the GIL and the lock.
-    ##
-    ## WHAT THIS COSTS, so it is a decision and not a surprise: episodes
-    ## recorded without top_scene CANNOT feed the object-centric / env-state
-    ## pipeline -- build_envstate_dataset.py exits with "no top_scene video"
-    ## and scene_features.py reads top_scene -- nor train any 3-camera ACT
-    ## config.  Recording for those, put the cameras back for the run:
-    ##     GIAVA_SCENE_CAMS=top,low python data_collection.py
-    ## `--scene-cams none|top|low|top,low` overrides the variable for one run.
-    ## Consumed here, before the positional episode-index parse below, which
-    ## rejects anything flag-shaped.
     _scene_sel = str(_take_option(
         "scene-cams", None,
         os.environ.get("GIAVA_SCENE_CAMS", "none"))).strip().lower()
@@ -1029,10 +818,7 @@ def main():
     _gate_last_print = [-10**9]
     ## DAgger bookkeeping: where each arm's joints sit in the policy's action
     ## vector, and a throttle for the "holding" message.
-    try:
-        from .policy_driver import arm_slices as _arm_slices
-    except ImportError:
-        from policy_driver import arm_slices as _arm_slices
+    from policy_driver import arm_slices as _arm_slices
     _dagger_slices = _arm_slices(arm_names)
     _dagger_last_print = [-10**9]
     _dagger_prev_human = [frozenset()]
@@ -1162,10 +948,7 @@ def main():
     ## this is a circumscribed-capsule proof-of-separation checked after
     ## them, immediately before set_joint_positions).  GIAVA_CAPSULE_GATE=0
     ## disables; see capsule_gate.py for margins and scope.
-    try:
-        from .capsule_gate import build_gate as _build_capsule_gate
-    except ImportError:
-        from capsule_gate import build_gate as _build_capsule_gate
+    from capsule_gate import build_gate as _build_capsule_gate
     from yourdfpy import URDF as _URDF_for_gate
     capsule_gate = _build_capsule_gate(robot, _URDF_for_gate.load(URDF_PATH))
     stats.collision_mode = COLLISION_MODE
@@ -1174,10 +957,7 @@ def main():
     ## inter-arm gate above but against the table plane instead of the other
     ## arms (table_gate.py). Hardware-validated 2026-09-09 but never swept,
     ## unlike capsule_gate: disable with --table off / GIAVA_TABLE_GATE=0.
-    try:
-        from .table_gate import build_gate as _build_table_gate
-    except ImportError:
-        from table_gate import build_gate as _build_table_gate
+    from table_gate import build_gate as _build_table_gate
     table_gate = _build_table_gate(robot, _URDF_for_gate.load(URDF_PATH))
     stats.table_mode = TABLE_MODE
 
@@ -1349,8 +1129,6 @@ def main():
               f"({len(CAMERA_INTRINSICS)} camera(s))")
     except Exception as exc:
         print(f"[calib] could not save camera intrinsics: {exc}")
-        if REQUIRE_CALIBRATION:
-            raise
 
     ## The RESOLVED config travels with the dataset, same reasoning as the
     ## intrinsics above: control rate, scales, clamps and every GIAVA_* env
@@ -1394,10 +1172,6 @@ def main():
     link_guard = LinkGuard()
 
     next_tick = now()
-
-    _slog = solver_log_summary()
-    if _slog:
-        print(_slog)
 
     _phase("dataset + config snapshot")
     print(f"[startup] total {now() - _startup_t0:.1f}s to READY")
@@ -1444,10 +1218,7 @@ def main():
     policy_driver = None
     _pd_extractor = None
     if _policy_ckpt:
-        try:
-            from .policy_driver import PolicyDriver
-        except ImportError:
-            from policy_driver import PolicyDriver
+        from policy_driver import PolicyDriver
         _pd_task = task_ctx["task"] if task_ctx["target"] else None
         policy_driver = PolicyDriver(
             _policy_ckpt, mode, arm_names, device="cuda",
@@ -1474,10 +1245,7 @@ def main():
             _pd_env_scene = "shape_sorter" if task_ctx["target"] else "flower"
             _pd_want = int(np.prod(
                 policy_driver.cfg.input_features[policy_driver.env_key].shape))
-            try:
-                from .rollout_policy import make_extractor as _make_extractor
-            except ImportError:
-                from rollout_policy import make_extractor as _make_extractor
+            from rollout_policy import make_extractor as _make_extractor
             _pd_extractor = _make_extractor(
                 _pd_env_scene, task_ctx["target"], _pd_want)
             if _pd_want != _pd_extractor.FEATURE_DIM:
@@ -1510,6 +1278,17 @@ def main():
                     img = img.copy() if img is not None else None
             if img is None:
                 return None, "no top_scene frame for env-state"
+            if getattr(_pd_extractor, "NEEDS_TWO_CAMERAS", False):
+                ## wrist_features: gripper-centric vector needs the wrist
+                ## frame as well (see rollout_policy.env_vector).
+                wimg = frames.get("right_wrist")
+                if wimg is None:
+                    with frame_lock:
+                        wimg = latest_frames.get("right_wrist")
+                        wimg = wimg.copy() if wimg is not None else None
+                if wimg is None:
+                    return None, "no right_wrist frame for env-state"
+                return _pd_extractor(wimg, img), None
             return _pd_extractor(img), None
         ## One throwaway inference now, so the first REAL tick does not pay
         ## the ~180 ms CUDA warmup (measured: policy_ms max 179 ms on the
@@ -1545,12 +1324,8 @@ def main():
     ## alignment reference.  `i` is the cursor into `eps`; it advances on a
     ## SAVED episode only, so a discarded or repeated attempt stays on the
     ## same position.  `rep <n>` / `rep next` / `rep list` move it by hand.
-    try:
-        from .scene_snapshots import (save_snapshot, load_snapshot,
-                                      alignment_view, list_episodes)
-    except ImportError:
-        from scene_snapshots import (save_snapshot, load_snapshot,
-                                     alignment_view, list_episodes)
+    from scene_snapshots import (save_snapshot, load_snapshot,
+                                 alignment_view, list_episodes)
     _pg = {"on": _place_grid, "tick": 0, "window": False, "warned": False}
     _rep = {"dir": None, "eps": [], "i": 0, "cams": [], "tick": 0,
             "cache": (None, {}), "window": False}
@@ -2281,12 +2056,8 @@ def main():
                 else:
                     try:
                         import cv2
-                        try:
-                            from . import place_grid as _pgm
-                            from . import scene_features as _sfm
-                        except ImportError:
-                            import place_grid as _pgm
-                            import scene_features as _sfm
+                        import place_grid as _pgm
+                        import scene_features as _sfm
                         _img = _pgm.draw(cv2.cvtColor(_ts, cv2.COLOR_RGB2BGR),
                                          _pgm.lattice(), _sfm.detect_object(_ts),
                                          8.0)

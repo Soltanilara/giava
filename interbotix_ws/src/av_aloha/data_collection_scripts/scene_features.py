@@ -219,3 +219,18 @@ class Extractor:
         """name -> (x, y) for auto metrics; names are the keys the flower-era
         rollout_scores.jsonl records already carry."""
         return {"flower": FLOWER_TARGET_PX, "oval": OVAL_TARGET_PX}
+
+
+## No-detection fallback for the first frame of an episode; see
+## build_envstate_dataset.py.  Position and size go to zero, which for
+## this layout means "image centre, no extent" -- the historical
+## behaviour, preserved exactly.
+MISS_VECTOR = [0.0, 0.0, 0.0, 0.0,
+               _norm_xy(*FLOWER_TARGET_PX, 640, 480)[0],
+               _norm_xy(*FLOWER_TARGET_PX, 640, 480)[1],
+               _norm_xy(*OVAL_TARGET_PX, 640, 480)[0],
+               _norm_xy(*OVAL_TARGET_PX, 640, 480)[1],
+               _norm_xy(*FLOWER_TARGET_PX, 640, 480)[0],
+               _norm_xy(*FLOWER_TARGET_PX, 640, 480)[1],
+               _norm_xy(*OVAL_TARGET_PX, 640, 480)[0],
+               _norm_xy(*OVAL_TARGET_PX, 640, 480)[1]]

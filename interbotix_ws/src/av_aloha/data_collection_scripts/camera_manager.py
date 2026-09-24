@@ -16,10 +16,7 @@ try:
 except ImportError:
     dai = None
 
-if __package__:
-    from .data_col_config import ARM_MODES
-else:
-    from data_col_config import ARM_MODES
+from data_col_config import ARM_MODES
 
 CAMERAS = [
     "left_wrist",
@@ -37,77 +34,22 @@ CAMERA_SERIALS = {
     "low_scene": "230322271312",
 }
 
-## RealSense colour-stream settings, in one place so the intrinsics recorded
-## below provably belong to the frames actually captured.  Intrinsics are
-## RESOLUTION SPECIFIC: change this and the old numbers no longer apply.
+# RealSense colour-stream settings
 RS_COLOR_WIDTH = 640
 RS_COLOR_HEIGHT = 480
 RS_COLOR_FPS = 60
 
-## Factory intrinsics of every RealSense opened this session, keyed by camera
-## name.  Filled by setup_realsense_cameras(); empty until then.
-##
-## Why this exists: undistortion needs a camera matrix AND distortion
-## coefficients, and neither was recorded anywhere in the production path.
-## (right.py read intrinsics but stored only [fx, fy, ppx, ppy] -- no
-## coefficients, so its datasets cannot be undistorted after the fact.)
+# Factory intrinsics of every RealSense camera used for undistortion
 CAMERA_INTRINSICS = {}
 
-## Calibration strictness.  Undistortion matters for geometric work
-## (reconstruction, hand-eye, metric measurement); it matters much less for
-## policy training, which learns whatever lens the data was shot through.
-##
-##   GIAVA_REQUIRE_CALIB=1   a camera whose intrinsics cannot be read is a
-##                           hard error -- nothing records silently
-##                           uncalibrated.
-##   GIAVA_REQUIRE_CALIB=0   warn and carry on (default; historical
-##                           behaviour, right for policy data collection).
-REQUIRE_CALIBRATION = os.environ.get("GIAVA_REQUIRE_CALIB", "0") == "1"
-
-
-class CalibrationUnavailable(RuntimeError):
-    """Raised when GIAVA_REQUIRE_CALIB=1 and intrinsics could not be read."""
-
-
 ## ------------------------------------------------------------------ ##
-## Frame-level time alignment
-## ------------------------------------------------------------------ ##
-##
-## The cameras free-run.  These D405s do NOT support inter_cam_sync_mode
-## (verified on all four at firmware 5.12.14.100 -- only
-## output_trigger_enabled is exposed), so there is no hardware genlock
-## available and alignment has to happen in software.
-##
-## The historical behaviour was latest-frame-wins: each tick took whatever
-## frame each camera happened to have most recently produced.  How stale
-## that frame was depended on when the tick happened to poll relative to
-## each camera's phase, so the skew was bounded only by a full frame period
-## (16.7 ms at 60 fps) and moved around tick to tick.
-##
-## Instead, keep a short history per camera and pick, for each one, the
-## frame nearest a common reference instant -- the newest instant EVERY
-## camera has already covered, so no camera is asked for a frame it has not
-## produced.  Each chosen frame is then within HALF a frame period of that
-## reference (<=8.3 ms at 60 fps), bounded and independent of polling phase,
-## and the reference is recorded alongside.
-##
-## WHAT THIS DOES NOT DO: it cannot reduce the spread BETWEEN cameras below
-## their relative phase offset.  Measured on this rig with three cameras all
-## running a true 60.2 fps and dense histories, the per-camera offsets from
-## the reference were -6.16 / 0.00 / +5.41 ms -- each well inside the
-## half-period bound, but an 11.6 ms spread overall.  That spread is the
-## cameras' physical phase difference: frames simply do not exist at the
-## same instants, and no selection rule can invent them.  Closing it needs
-## hardware sync, which the D405 does not offer.
-##
-## What makes it useful anyway: the offsets are STABLE (std 0.027 ms over
-## 150 samples), so they are a calibratable constant rather than noise --
-## provided the per-camera timestamp is recorded faithfully, which is why
-## the dataset stores them as float64.  select_synchronized_frames reports
-## the achieved spread per timestep so this can be checked, not assumed.
-##
-##   GIAVA_SYNC_FRAMES=1  nearest-timestamp selection (default)
-##   GIAVA_SYNC_FRAMES=0  latest-frame-wins, the historical behaviour
+## The D405s have no hardware genlock, so each tick picks, per camera, the
+## frame nearest the newest instant every camera has already covered -- within
+## half a frame period of a common reference, where latest-frame-wins was
+## bounded only by a full period.  The residual offset between cameras
+## (~11.6 ms at 60 fps, from the recorded timestamps) cannot be closed in
+## software but is stable, so it is calibratable.  GIAVA_SYNC_FRAMES=0
+## restores latest-frame-wins.
 SYNC_FRAMES = os.environ.get("GIAVA_SYNC_FRAMES", "1") == "1"
 
 ## Frames kept per camera.  At 60 fps this is ~0.13 s of history, plenty to
@@ -182,6 +124,32 @@ def select_synchronized_frames(cameras):
         "cameras_missing": [c for c in cameras if c not in frames],
     }
 
+@dataclass
+class CameraConfig:
+    top_active: bool = True
+    low_active: bool = False
+
+def get_active_cameras(arm_mode: str, camera_config: CameraConfig):
+    cameras = []
+    arms = ARM_MODES[arm_mode]
+
+    if "left" in arms:
+        cameras.append("left_wrist")
+
+    if "right" in arms:
+        cameras.append("right_wrist")
+
+    if "middle" in arms:
+        cameras.append("oak_left")
+        cameras.append("oak_right")
+
+    if camera_config.top_active:
+        cameras.append("top_scene")
+
+    if camera_config.low_active:
+        cameras.append("low_scene")
+
+    return cameras
 
 def intrinsics_to_dict(intr, serial=None, name=None, fps=None):
     """rs.intrinsics -> plain dict, with an OpenCV-shaped camera matrix.
@@ -234,7 +202,6 @@ def save_camera_intrinsics(path):
         "recorded": _time.strftime("%Y-%m-%d %H:%M:%S"),
         "color_stream": {"width": RS_COLOR_WIDTH, "height": RS_COLOR_HEIGHT,
                          "fps": RS_COLOR_FPS, "format": "rgb8"},
-        "require_calibration": REQUIRE_CALIBRATION,
         "cameras": CAMERA_INTRINSICS,
         "note": (
             "Factory intrinsics read from each device at session start. "
@@ -247,51 +214,18 @@ def save_camera_intrinsics(path):
         json.dump(payload, f, indent=2)
     return path
 
-@dataclass
-class CameraConfig:
-    top_active: bool = True
-    low_active: bool = False
 
-def get_active_cameras(arm_mode: str, camera_config: CameraConfig):
-    cameras = []
-    arms = ARM_MODES[arm_mode]
 
-    if "left" in arms:
-        cameras.append("left_wrist")
-
-    if "right" in arms:
-        cameras.append("right_wrist")
-
-    if "middle" in arms:
-        cameras.append("oak_left")
-        cameras.append("oak_right")
-
-    if camera_config.top_active:
-        cameras.append("top_scene")
-
-    if camera_config.low_active:
-        cameras.append("low_scene")
-
-    return cameras
-
-## Movidius product IDs seen BEFORE the firmware boots.  In this state the
-## device is the ROM bootloader, which is USB2-only by design -- it enumerates
-## at 480M on a perfectly good USB3 port and cable, then re-enumerates as
-## f63b ("Luxonis Device", USB 3.20, 5000M) once depthai uploads the firmware.
+## The ROM bootloader is USB2-only by design: it enumerates at 480M on a good
+## USB3 port, then re-enumerates at 5000M once depthai uploads the firmware.
 OAK_BOOTLOADER_PIDS = {"2485", "2486", "f63c"}
 
 
 def oak_usb_speed_mbps():
-    """Negotiated USB speed of the OAK (Movidius VID 03e7) from sysfs.
+    """Negotiated USB speed from sysfs (480/5000), or None if not yet knowable.
 
-    Returns e.g. 480 or 5000, or None if the speed is not KNOWABLE yet --
-    which includes the case where the only Movidius device present is an
-    unbooted bootloader.  Reading 480 off the bootloader and calling it "the
-    link speed" is a false alarm: it says USB2 on hardware that will negotiate
-    5000M two seconds later, and it fires on every cold start because
-    oak_stream_settings() runs BEFORE dai.Device() boots the device.
-
-    None means "don't know", and the caller must not warn on it."""
+    None includes "only an unbooted bootloader is present" -- its 480M says
+    nothing about the real link, so the caller must not warn on None."""
     import glob
     for vend in glob.glob("/sys/bus/usb/devices/*/idVendor"):
         try:
@@ -334,12 +268,10 @@ def oak_stream_settings():
                   "move to a USB3 port/cable, or drop to (640, 480, 25).")
     return 1280, 800, 25
 
-
 ## Dataset frames keep the historical 640x480 shape: center-crop the native
 ## 1280x800 to 4:3 (1066x800) then resize — the same view the on-device ISP
 ## produced when we streamed 640x480 directly.
 OAK_DATASET_SIZE = (640, 480)
-
 
 def oak_dataset_view(bgr):
     h, w = bgr.shape[:2]
@@ -352,7 +284,7 @@ def oak_dataset_view(bgr):
                       interpolation=cv2.INTER_AREA)
 
 
-## Undistort + rectify maps for the OAK pair.  Preferred source: Devi's
+## Undistort + rectify maps for the OAK pair.  Preferred source:
 ## checkerboard calibration (stereo.npz from the foveated_world_model repo,
 ## branch oak-cameras — 46 pairs @1280x800, rms 1.3 px, verified with
 ## rect_*.png samples).  Fallback: the device EEPROM.  Applied to the
@@ -360,23 +292,8 @@ def oak_dataset_view(bgr):
 ## {"maps": None} means no usable calibration: stream raw.
 OAK_RECTIFY = {"maps": None}
 
-## WHICH PHYSICAL LENS IS "LEFT".
-##
-## `oak_camera_pipeline` binds CAM_B to `cam_left` and CAM_C to `cam_right`,
-## which is the DepthAI convention for a factory OAK-D and an ASSUMPTION on a
-## rig assembled by hand.  On this one it was wrong: measured 2026-08-27, the
-## board sat 102 px further LEFT in the frame called "left" across 25 of 25
-## pairs, and the installed calibration carried T[0] = +62.63 mm where a
-## correctly ordered pair must be negative.  The right lens's image was going
-## to the left eye -- inverted depth, for months, invisible to every
-## calibration metric (a swap leaves rectified rows perfectly aligned).
-##
-## Corrected HERE, at the single point where the two frames are named, rather
-## than in the four downstream places that consume the labels (capture files,
-## rectify maps, dataset streams, headset eyes).  Toggle at runtime with the
-## `swap` command in teleop, or set GIAVA_OAK_SWAP_EYES=1 to start swapped.
+# The left and right camera modules were swapped when switching the camera case cover
 OAK_SWAP_EYES = {"on": os.environ.get("GIAVA_OAK_SWAP_EYES", "0") == "1"}
-
 
 def oak_swap_eyes(on=None) -> bool:
     """Get, or set, whether the two OAK frames are exchanged at the source."""
@@ -386,36 +303,18 @@ def oak_swap_eyes(on=None) -> bool:
 
 OAK_CALIB_STEREO_NPZ = "/home/devi/foveated_world_model/stereo.npz"
 
-## The baseline this rig ACTUALLY has, measured with a ruler (2026-08-26: 62 mm
-## after the cameras were moved into the new case).  This exists to catch a
-## calibration that belongs to a DIFFERENT physical arrangement.
-##
-## Nothing else can catch it.  A stereo npz records image size, intrinsics and
-## extrinsics but nothing identifying the rig it was shot on, so re-casing the
-## cameras leaves a file that still loads, still matches on resolution, and is
-## silently wrong.  Getting the extrinsics wrong does not blur the image -- it
-## breaks epipolar alignment, leaving residual VERTICAL disparity between the
-## eyes, which is the one stereo error the operator cannot fuse and reads as
-## eye strain rather than as a picture fault.  Warping confidently through the
-## wrong transform is worse than not rectifying at all, because the failure
-## does not look like a failure.
-##
-## The baseline is the one number that is both stored in the calibration and
-## measurable by hand in ten seconds, which is what makes it a usable check.
-## Set to None to disable the check entirely.
+# Baseline (distance between camera modules) as measured by ruler and verified
+# with stereo calibration. Getting this value wrong breaks epipolar alignment, 
+# leaving residual VERTICAL disparity between the eyes, which is the one stereo 
+# error the operator cannot fuse and reads as eye strain rather than as a 
+# picture fault. Warping with the wrong value is worse than not rectifying at all,
+# because the failure does not look like a failure.
 OAK_EXPECTED_BASELINE_M = 0.062
 OAK_BASELINE_TOLERANCE_M = 0.002
 
 
 def _npz_rectified_baseline(d):
-    """SIGNED rectified baseline in metres from a stereo npz: -P2[0,3] / fx.
-
-    The sign is the point.  It used to be thrown away with abs() -- the
-    docstring already said "-P2[0,3]/fx" while the code returned the
-    magnitude -- and that abs() is why a calibration with reversed eye
-    handedness loaded happily for months.  A correctly ordered pair puts
-    rectified camera 2 to the RIGHT of camera 1, giving P2[0,3] < 0 and a
-    POSITIVE baseline here; negative means the eyes are swapped."""
+    """SIGNED rectified baseline in metres in case camera modules are reversed"""
     fx = float(d["P1"][0, 0])
     return (-float(d["P2"][0, 3]) / fx) if fx else 0.0
 
@@ -426,9 +325,8 @@ def load_oak_rectify_maps_from_file(w, h, path=None):
     The npz stores the cv2.initUndistortRectifyMap outputs directly
     (map1x/map1y = left/CAM_B, map2x/map2y = right/CAM_C).
 
-    Raises if the calibration's baseline disagrees with the rig's measured one
-    -- see OAK_EXPECTED_BASELINE_M.  The caller treats that like any other
-    unusable calibration and streams raw, which is the honest outcome."""
+    Raises if the calibration's baseline disagrees with the measured one
+    which is stored as OAK_EXPECTED_BASELINE_M."""
     d = np.load(path or OAK_CALIB_STEREO_NPZ)
     cw, ch = (int(v) for v in d["image_size"])
     if (cw, ch) != (w, h):
@@ -438,16 +336,9 @@ def load_oak_rectify_maps_from_file(w, h, path=None):
         signed = _npz_rectified_baseline(d)
         if signed < 0.0:
             raise ValueError(
-                f"calibration has REVERSED EYE HANDEDNESS: signed rectified "
-                f"baseline is {signed * 1000:+.1f} mm, and a correctly "
-                f"ordered (left, right) pair is always positive. The images "
-                f"fitted as the LEFT eye were taken by the physically-RIGHT "
-                f"camera, so installing this would send the right lens to "
-                f"the left eye and invert depth. Nothing else can catch "
-                f"this: a swap leaves rectified rows perfectly aligned, so "
-                f"every quality metric still reads fine. Re-fit the capture "
-                f"with `oak_stereo_calibrate.py --swap`, and fix the labels "
-                f"at the source (GIAVA_OAK_SWAP_EYES=1, or the `swap` "
+                f"Based on calibration results, eye cam modules seem to be reversed. "
+                f"Re-fit the capture with `oak_stereo_calibrate.py --swap`, and fix "
+                f"the labels at the source (GIAVA_OAK_SWAP_EYES=1, or the `swap` "
                 f"command in teleop).")
 
     if OAK_EXPECTED_BASELINE_M is not None and "P1" in d and "P2" in d:
@@ -469,23 +360,16 @@ def load_oak_rectify_maps_from_file(w, h, path=None):
 
 
 def install_rectify_from_npz(path, w, h):
-    """Hot-swap the live rectification to a freshly fitted calibration.
+    """Measure new rectification and directly implement into live view
 
     Used by teleop's `cal` command so a new fit can be SEEN rather than read
-    as an RMS number: the maps take effect on the next frame the OAK worker
-    pumps, with the arms still live.  Goes through
-    `load_oak_rectify_maps_from_file`, so a fit with reversed handedness or
-    the wrong baseline is refused here exactly as it would be at startup --
-    the live path must not be the lenient one.
-
-    Also refreshes the intrinsics handed to the headset viewer; leaving those
-    stale would place correctly-rectified images at the OLD field of view,
-    which reads as the two eyes sitting too far apart.
-    """
+    as an RMS number.  Goes through `load_oak_rectify_maps_from_file`, so a fit 
+    with reversed handedness or the wrong baseline is refused here exactly 
+    as it would be at startup."""
     maps = load_oak_rectify_maps_from_file(w, h, path=path)
     OAK_RECTIFY["maps"] = maps
     try:
-        OAK_GVLINK_CAMERA["params"] = oak_rectified_params_from_npz(w, h, path=path)
+        OAK_GVLINK_CAMERA["params"] = oak_params_from_npz(w, h, True, path=path)
     except Exception as exc:
         print(f"[OAK] rectify maps installed, but the viewer intrinsics could "
               f"not be refreshed ({exc}) -- the images are rectified and the "
@@ -494,11 +378,8 @@ def install_rectify_from_npz(path, w, h):
 
 
 def build_oak_rectify_maps(calib, w, h):
-    """cv2.remap maps that undistort AND stereo-rectify the OAK pair.
-
-    Rectification aligns the two views so any object sits on the same
-    horizontal line in both eyes (only horizontal disparity remains),
-    which is what makes the stereo pair fuse comfortably."""
+    """Code to undistort AND stereo-rectify the OAK pair such that only 
+    horizontal disparity remains, making stereo pair fuse comfortably."""
     left, right = dai.CameraBoardSocket.CAM_B, dai.CameraBoardSocket.CAM_C
     K1 = np.array(calib.getCameraIntrinsics(left, w, h), dtype=np.float64)
     K2 = np.array(calib.getCameraIntrinsics(right, w, h), dtype=np.float64)
@@ -510,22 +391,6 @@ def build_oak_rectify_maps(calib, w, h):
         raise ValueError("EEPROM has no real calibration (zero intrinsics "
                          "or zero baseline)")
     size = (w, h)
-    fisheye = False
-    try:
-        fisheye = calib.getDistortionModel(left) == dai.CameraModel.Fisheye
-    except Exception:
-        pass
-    if fisheye:
-        D1, D2 = D1[:4].reshape(4, 1), D2[:4].reshape(4, 1)
-        R1, R2, P1, P2, _ = cv2.fisheye.stereoRectify(
-            K1, D1, K2, D2, size, R, T,
-            flags=cv2.CALIB_ZERO_DISPARITY, balance=0.0)
-        return {
-            "left": cv2.fisheye.initUndistortRectifyMap(
-                K1, D1, R1, P1, size, cv2.CV_16SC2),
-            "right": cv2.fisheye.initUndistortRectifyMap(
-                K2, D2, R2, P2, size, cv2.CV_16SC2),
-        }
     R1, R2, P1, P2 = cv2.stereoRectify(
         K1, D1, K2, D2, size, R, T,
         flags=cv2.CALIB_ZERO_DISPARITY, alpha=0)[:4]
@@ -577,8 +442,6 @@ def oak_gvlink_camera_params(calib, w, h, fisheye=None):
     return {
         "w": int(w), "h": int(h),
         "b": baseline,
-        # The frames really are rectified before they are sent (see oak_worker), and the
-        # viewer refuses to undistort, so this must stay true.
         "rect": True,
         "l": {"fx": fx, "fy": float(P1[1, 1]),
               "cx": float(P1[0, 2]), "cy": float(P1[1, 2])},
@@ -587,65 +450,49 @@ def oak_gvlink_camera_params(calib, w, h, fisheye=None):
     }
 
 
-def oak_rectified_params_from_npz(w, h, path=None):
-    """Rectified intrinsics + baseline for the viewer, from the checkerboard npz.
+def oak_params_from_npz(w, h, rectified, path=None, baseline_m=None):
+    """Per-eye intrinsics + baseline for the headset viewer, from the npz.
 
-    The npz already stores P1/P2 from the same cv2.stereoRectify call that
-    produced its remap tables, so this reads the geometry rather than
-    recomputing it -- and it is by construction the geometry of the frames the
-    sender actually transmits when those maps are in use.
+    ONE function for two cases that differ only in which matrices describe the
+    frames actually being sent:
 
-    Without this the npz path was SILENTLY WORSE than the EEPROM fallback: it
-    installed the better maps and then left OAK_GVLINK_CAMERA empty, so the
-    viewer placed correctly rectified images from a synthesised 90-degree
-    pinhole -- the images are right and their angular size is a guess."""
+      rectified=True   P1/P2 -- the geometry of the same cv2.stereoRectify
+                       call that produced the remap tables, so it is by
+                       construction the geometry of the transmitted frames.
+                       Baseline comes from P2[0,3]/fx.
+      rectified=False  K1/K2 -- the raw per-lens intrinsics, for when the
+                       rectification was rejected (re-casing invalidates the
+                       stereo EXTRINSICS but not the per-lens intrinsics).
+                       Baseline is the hand-measured one, because the npz's
+                       extrinsics are exactly the part that went stale.
+
+    Why it matters that this is populated at all: without it the viewer
+    synthesises a 90-degree pinhole, while these lenses measure ~95-97 deg
+    horizontally -- everything renders ~13% too small, disparities included,
+    which reads as the images sitting too far apart to fuse.
+
+    `rect` goes on the wire as given and must match reality: the operator's
+    residual-misalignment trim lives in the viewer, not here.
+    """
     d = np.load(path or OAK_CALIB_STEREO_NPZ)
     cw, ch = (int(v) for v in d["image_size"])
     if (cw, ch) != (w, h):
         raise ValueError(f"calibration is {cw}x{ch} but stream is {w}x{h}")
-    P1, P2 = d["P1"], d["P2"]
-    fx = float(P1[0, 0])
+
+    if rectified:
+        L, Rm = d["P1"], d["P2"]
+        fx = float(L[0, 0])
+        b = abs(float(Rm[0, 3]) / fx) if fx else 0.0
+    else:
+        L, Rm = d["K1"], d["K2"]
+        b = float(baseline_m if baseline_m is not None
+                  else (OAK_EXPECTED_BASELINE_M or 0.0))
     return {
-        "w": int(w), "h": int(h),
-        "b": abs(float(P2[0, 3]) / fx) if fx else 0.0,
-        "rect": True,
-        "l": {"fx": fx, "fy": float(P1[1, 1]),
-              "cx": float(P1[0, 2]), "cy": float(P1[1, 2])},
-        "r": {"fx": float(P2[0, 0]), "fy": float(P2[1, 1]),
-              "cx": float(P2[0, 2]), "cy": float(P2[1, 2])},
-    }
-
-
-def oak_unrectified_params_from_npz(w, h, path=None, baseline_m=None):
-    """Per-eye pinhole intrinsics from the checkerboard npz, WITHOUT rectification.
-
-    Re-casing the cameras invalidates the stereo EXTRINSICS -- that is exactly what
-    the baseline guard in load_oak_rectify_maps_from_file() catches -- but not the
-    per-LENS intrinsics: focal length and principal point live in the lens/sensor
-    assembly and survive the move.  So when the full rectification is rejected, the
-    viewer can still be told the true angular size of each image (K1/K2 measure the
-    lenses at ~95-97 deg horizontal; the synthesised fallback guesses 90 and renders
-    everything ~13% too small, disparities included -- which reads as the images
-    sitting too far apart to fuse).
-
-    rect is False and must stay False on the wire: the frames really are raw, and the
-    operator's residual-misalignment trim lives in the viewer, not here."""
-    d = np.load(path or OAK_CALIB_STEREO_NPZ)
-    cw, ch = (int(v) for v in d["image_size"])
-    if (cw, ch) != (w, h):
-        raise ValueError(f"calibration is {cw}x{ch} but stream is {w}x{h}")
-    K1, K2 = d["K1"], d["K2"]
-    b = baseline_m if baseline_m is not None else (OAK_EXPECTED_BASELINE_M or 0.0)
-    return {
-        "w": int(w), "h": int(h),
-        # The hand-measured baseline, not the npz's: extrinsics are the part that
-        # went stale, and 62 mm was measured with a ruler on the new case.
-        "b": float(b),
-        "rect": False,
-        "l": {"fx": float(K1[0, 0]), "fy": float(K1[1, 1]),
-              "cx": float(K1[0, 2]), "cy": float(K1[1, 2])},
-        "r": {"fx": float(K2[0, 0]), "fy": float(K2[1, 1]),
-              "cx": float(K2[0, 2]), "cy": float(K2[1, 2])},
+        "w": int(w), "h": int(h), "b": b, "rect": bool(rectified),
+        "l": {"fx": float(L[0, 0]), "fy": float(L[1, 1]),
+              "cx": float(L[0, 2]), "cy": float(L[1, 2])},
+        "r": {"fx": float(Rm[0, 0]), "fy": float(Rm[1, 1]),
+              "cx": float(Rm[0, 2]), "cy": float(Rm[1, 2])},
     }
 
 
@@ -656,23 +503,10 @@ OAK_GVLINK_CAMERA = {"params": None}
 
 
 ## ------------------------------------------------------------------ ##
-## Single-shot RAW stereo capture (checkerboard calibration).
-##
-## Stereo calibration needs the pair the way the sensors produced it: RAW
-## (nothing rectified -- rectification is the OUTPUT of the calibration, so
-## feeding rectified images back in measures nothing), NATIVE resolution (a
-## crop or resize changes fx/fy/cx/cy, and the maps built from it then apply
-## to no stream anyone actually runs), and both eyes from the SAME device
-## instant.  By the time oak_worker has stored its frames, all three of those
-## are already gone: latest_frames holds the 640x480 dataset crop, and the
-## headset copy is remapped.
-##
-## So the capture is taken inside the worker, in the one iteration that holds
-## both untouched frames.  It is ARMED rather than polled -- request_oak_
-## capture() sets "want", the next worker iteration fills in the pair and
-## clears it -- which costs one boolean read per frame when idle, instead of
-## a 3 MB memcpy per eye per frame for a pair that is wanted a few dozen
-## times in a session.
+## Single-shot RAW stereo capture for checkerboard calibration: taken inside
+## the worker, the only place holding both eyes untouched at native resolution
+## (latest_frames has the 640x480 crop, the headset copy is remapped).  Armed
+## rather than polled, so idle cost is one boolean read per frame.
 OAK_CAPTURE = {"want": False, "left": None, "right": None, "ts": None}
 
 
@@ -703,16 +537,14 @@ def setup_oak_stereo():
         raise ImportError("depthai is required for OAK stereo cameras.")
     devices = dai.Device.getAllAvailableDevices()
     if not devices:
-        print("=" * 60)
-        print("[OAK] NO DEVICE FOUND.  Check the connection:")
-        print("  lsusb | grep -i 03e7        (Movidius/Luxonis VID)")
-        print("  python -c 'import depthai as dai; "
-              "print(dai.Device.getAllAvailableDevices())'")
-        print("  If it was connected: unplug/replug (earlier X_LINK crashes")
-        print("  can leave the device wedged), prefer a USB3 port/cable.")
-        print("[OAK] Continuing WITHOUT the OAK cameras — no headset video,")
-        print("      oak_* dataset frames will be missing.")
-        print("=" * 60)
+        print(
+            "=" * 60 + "\n"
+            "[OAK] NO DEVICE FOUND.  Check:\n"
+            "  lsusb | grep -i 03e7      (Movidius/Luxonis VID)\n"
+            "  If it was connected: unplug/replug -- an earlier X_LINK crash\n"
+            "  can wedge the device.  Prefer a USB3 port and cable.\n"
+            "[OAK] Continuing without the OAKs: no headset video, oak_* frames\n"
+            "      will be missing from the dataset.\n" + "=" * 60)
         return None
     _info(f"[OAK] found: {[(d.deviceId, str(d.state)) for d in devices]}")
     _w, _h, _fps = oak_stream_settings()
@@ -724,7 +556,7 @@ def setup_oak_stereo():
               f"({OAK_CALIB_STEREO_NPZ}) — headset stream undistorted + "
               "rectified.")
         try:
-            OAK_GVLINK_CAMERA["params"] = oak_rectified_params_from_npz(_w, _h)
+            OAK_GVLINK_CAMERA["params"] = oak_params_from_npz(_w, _h)
             p = OAK_GVLINK_CAMERA["params"]
             _info(f"[OAK] headset camera params (npz, RECTIFIED): "
                   f"{p['w']}x{p['h']} fx={p['l']['fx']:.0f} "
@@ -756,7 +588,7 @@ def setup_oak_stereo():
             # the npz intrinsics (rect=False, ruler baseline) so it places the raw
             # images at their true angular size instead of a 90-degree guess.
             try:
-                OAK_GVLINK_CAMERA["params"] = oak_unrectified_params_from_npz(_w, _h)
+                OAK_GVLINK_CAMERA["params"] = oak_params_from_npz(_w, _h)
                 p = OAK_GVLINK_CAMERA["params"]
                 _info(f"[OAK] headset camera params (UNRECTIFIED, npz intrinsics): "
                       f"{p['w']}x{p['h']} fx={p['l']['fx']:.0f}/{p['r']['fx']:.0f} "
@@ -769,10 +601,8 @@ def setup_oak_stereo():
     cam_left = oak_pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
     cam_right = oak_pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
 
-    # FIX OV9782/OV9282: this device reports OV9282 (mono) for OV9782-class
-    # COLOR sensors (identical I2C interface, no way to probe the bayer
-    # filter); without forcing COLOR the frames come out mono with grid
-    # artifacts.  Needs depthai 3.5.0 — see oak_stream_settings().
+    # This device misreports OV9782 colour sensors as OV9282 (mono); without
+    # forcing COLOR the frames come out mono with grid artifacts (depthai 3.5+).
     cam_left.setSensorType(dai.CameraSensorType.COLOR)
     cam_right.setSensorType(dai.CameraSensorType.COLOR)
 
@@ -823,17 +653,11 @@ def setup_realsense_cameras(active_cameras, camera_shutdown, frame_lock, latest_
             print(f"[RealSense] Continuing WITHOUT '{name}' — its dataset")
             print("  frames will be missing until reconnected properly.")
             print("=" * 60)
-            if REQUIRE_CALIBRATION:
-                raise CalibrationUnavailable(
-                    f"'{name}' (serial {serial}) failed to start and "
-                    f"GIAVA_REQUIRE_CALIB=1, so no uncalibrated recording is "
-                    f"allowed. Fix the camera or unset the toggle.") from e
             continue
 
         # Global time maps this device's clock onto the host epoch via a
         # per-device linear fit, which is what makes timestamps comparable
-        # BETWEEN cameras. It is normally on by default; set it explicitly
-        # so an alignment result never depends on an inherited default.
+        # BETWEEN cameras.
         # (This is an estimate against the host, NOT hardware sync.)
         for sensor in profile.get_device().query_sensors():
             if sensor.supports(rs.option.global_time_enabled):
@@ -863,10 +687,6 @@ def setup_realsense_cameras(active_cameras, camera_shutdown, frame_lock, latest_
                   f"model={i['distortion_model']}")
         except Exception as e:
             print(f"[RealSense] '{name}': could not read intrinsics: {e}")
-            if REQUIRE_CALIBRATION:
-                raise CalibrationUnavailable(
-                    f"'{name}' (serial {serial}) has no readable intrinsics "
-                    f"and GIAVA_REQUIRE_CALIB=1.") from e
 
         rs_pipelines[name] = rs_pipeline
 
@@ -1031,24 +851,24 @@ def setup_cameras(
 ## EYE_VIEW_INWARD_FRAC of the width (left image moves right, right image
 ## moves left), which zooms the view out and pulls the pair together.
 ##
-## DISABLED BY DEFAULT (scale 1.0, inward 0.0): the Unity viewer now does both
-## jobs as quad geometry, for free and without touching the pixels --
-## videoVFOV/videoScale replace the scale, stereoSeparationDeg replaces the
-## inward shift (opposite sign: inward positive == stereoSeparationDeg
-## negative).  Doing it here instead cost real image quality: at scale 0.825
-## about a third of every transmitted frame was black border that the encoder
-## still had to spend bitrate on, and the resize + canvas copy ran twice per
-## frame on the capture thread that feeds the encoder.
+## DISABLED BY DEFAULT (scale 1.0, inward 0.0): the Unity viewer now does
+## both jobs as quad geometry.videoVFOV/videoScale replace the scale, 
+## stereoSeparationDeg replaces the inward shift (opposite sign: 
+## inward positive == stereoSeparationDeg negative).  Doing it here instead 
+## cost real image quality: at scale 0.825 about a third of every transmitted 
+## frame was black border that the encoder still had to spend bitrate on, 
+## and the resize + canvas copy ran twice per frame on the capture thread 
+## that feeds the encoder.
 ##
 ## compose_eye_view() short-circuits and returns the frame untouched at these
 ## values, so leaving them here costs nothing.  Set them again only if you
 ## deliberately want the sender to do the framing -- and if you do, zero the
-## Unity side or the two will fight.
+## Unity side or the two will collide.
 EYE_VIEW_SCALE = 1.0
 EYE_VIEW_INWARD_FRAC = 0.0
 
 ## Runtime-tunable copies (the constants above are the defaults).  The values
-## went stale when checkerboard rectification was added to the headset path --
+## went stale when checkerboard rectification was added to the headset path.
 ## rectification rotates each view and re-centers the principal points, which
 ## changes the disparity geometry the old inward shift was tuned against.
 ## Retune LIVE from the data-collection keyboard ( , . adjust convergence,
@@ -1229,6 +1049,8 @@ def camera_worker(name, rs_pipeline, camera_shutdown, frame_lock, latest_frames,
             latest_timestamps[name] = color_ts
             _record_history(name, color_ts, color, frame_number)
 
+## Previously zoomed the top camera to crop out background distractors.
+## Not used anymore.
 def digital_zoom(frame, zoom=1.6):
     h, w = frame.shape[:2]
     new_w = int(w / zoom)

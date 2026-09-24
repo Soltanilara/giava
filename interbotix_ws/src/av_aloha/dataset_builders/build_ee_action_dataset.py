@@ -36,6 +36,8 @@ teleop uses.  Without it the 8-d output means nothing to the servos.
 """
 from __future__ import annotations
 
+import _giava_paths  # noqa: F401  (puts the shared giava trees on sys.path)
+
 import argparse
 import glob
 import json
@@ -77,12 +79,8 @@ def feature_stats(M):
 def verify_fk(src, arm, A, E, n=300, seed=0):
     """Recompute FK(action joints) with the same URDF and compare to the
     recorded ee_pose.  Returns (max position error [m], max quat angle [rad])."""
-    try:
-        from robot_control import build_robot_model
-        from arm_config import ARM_CONFIG
-    except ImportError:
-        from .robot_control import build_robot_model
-        from .arm_config import ARM_CONFIG
+    from robot_kinematics import build_robot_model
+    from arm_config import ARM_CONFIG
     robot, arm_data = build_robot_model(arm)
     idx = arm_data[arm]["joint_indices"]; ee = arm_data[arm]["ee_index"]
     nj = ARM_CONFIG[arm]["num_joints"]

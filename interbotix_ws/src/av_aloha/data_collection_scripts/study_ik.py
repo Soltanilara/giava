@@ -390,10 +390,7 @@ class CoupledStudyIK:
         ## silently by design (a missing driver must not stop data
         ## collection), which is exactly how a GPU that never engaged stays
         ## invisible -- so it is printed rather than assumed.
-        try:
-            from .jax_platform import describe as _jax_describe
-        except ImportError:
-            from jax_platform import describe as _jax_describe
+        from jax_platform import describe as _jax_describe
         print(_jax_describe())
 
     # ------------------------------------------------------------------ #
@@ -512,12 +509,8 @@ def build_study_ik(robot, control_dt: float = STUDY_DT,
 
     Returns a CoupledStudyIK; call `.solve(prev_q, {arm: (pos, wxyz)})` with
     DRIVER-coordinate joints, exactly as data_collection.py does."""
-    try:
-        from .arm_config import ARM_CONFIG as _AC
-        from .arm_config import URDF_PATH as _UP
-    except ImportError:
-        from arm_config import ARM_CONFIG as _AC
-        from arm_config import URDF_PATH as _UP
+    from arm_config import ARM_CONFIG as _AC
+    from arm_config import URDF_PATH as _UP
     return CoupledStudyIK(
         robot,
         urdf_path or _UP,

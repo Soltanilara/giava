@@ -4,11 +4,20 @@ WHY THIS EXISTS
 ================
 2026-08-27, three-arm teleop: the right arm stopped following, its command
 state drifted 4.071 rad from measured, and the enable-time resync faithfully
-adopted a pose with `right_gripper_base` 307 mm BELOW the table.  That pose is
-real and reachable (shoulder pinned near its +1.257 rad limit, the arm folded
-straight down over the front edge) -- the arm had lost torque and fallen.
-Nothing in the loop noticed: `set_joint_positions`' return value is discarded,
-and the only measured-vs-commanded check ran at teleop enable.
+adopted a pose whose forward kinematics put `right_gripper_base` 307 mm BELOW
+the table.
+
+That pose is NOT physically reachable on this rig -- the tabletop is in the
+way -- which is the sharper version of the problem.  It means the resync did
+not adopt a real fallen pose; it adopted joint angles that no real arm was in.
+Whether those came from a limp motor still reporting stale counts, a bad read,
+or an encoder that had wrapped, the failure is the same: something upstream
+handed the loop a measurement that could not be true, and the loop believed it.
+
+Nothing noticed: `set_joint_positions`' return value is discarded, and the only
+measured-vs-commanded check ran at teleop enable.  A guard that asks "is this
+pose physically possible" catches this class of fault regardless of its cause,
+which a drift threshold alone does not.
 
 A servo that latches `Hardware_Error_Status` shuts its own torque off and
 stays that way.  Every command after that is accepted by the driver, published
@@ -71,10 +80,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-try:
-    from .arm_config import ARM_CONFIG
-except ImportError:
-    from arm_config import ARM_CONFIG
+from arm_config import ARM_CONFIG
 
 
 ## Control-table bits, X-series (Hardware_Error_Status, address 70).

@@ -60,7 +60,7 @@ class Config:
     device: str = "cuda"
     resume: bool = False
     checkpoint_path: str = ""
-    wandb: WandBConfig = WandBConfig()
-    train: TrainConfig = TrainConfig()
-    task: TaskConfig = TaskConfig()
-    policy: PolicyConfig = PolicyConfig()
+    wandb: WandBConfig = field(default_factory=WandBConfig)
+    train: TrainConfig = field(default_factory=TrainConfig)
+    task: TaskConfig = field(default_factory=TaskConfig)
+    policy: PolicyConfig = field(default_factory=PolicyConfig)

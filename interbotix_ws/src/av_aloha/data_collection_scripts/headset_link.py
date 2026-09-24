@@ -29,10 +29,7 @@ def make_headset(**kwargs):
     name = transport_name()
 
     if name in ("webrtc", "rtc"):
-        if __package__:
-            from .webrtc_headset import WebRTCHeadset
-        else:
-            from webrtc_headset import WebRTCHeadset
+        from webrtc_headset import WebRTCHeadset
         # The UDP-only options mean nothing to the WebRTC class.
         for k in ("camera_params", "src_size", "ports", "beacon", "fps",
                   "bitrate_kbps", "min_bitrate_kbps", "canvas", "codec",
@@ -43,10 +40,7 @@ def make_headset(**kwargs):
         print("[headset] transport: webrtc (Firestore signalling)")
         return WebRTCHeadset(**kwargs)
 
-    if __package__:
-        from .gvlink_headset import GvLinkHeadset
-    else:
-        from gvlink_headset import GvLinkHeadset
+    from gvlink_headset import GvLinkHeadset
 
     # Describe the real camera when the OAK calibration has been read, so the viewer
     # places the images from measured geometry instead of a guessed field of view.

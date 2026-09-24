@@ -3,10 +3,8 @@ Robot creation, configuration, state queries, and motion helpers.
 """
 import warnings
 
-# ROS noetic ships python2-era docstrings ("\p", "\*") that python 3.12
-# flags as SyntaxWarning on every run (system dirs are root-owned, so the
-# bytecode is never cached).  Harmless — silence just that warning, before
-# the interbotix/actionlib/tf import chain below compiles them.
+# Ignore the ROS syntax warning where python2-era docstrings ("\p", "\*") that 
+# ros noetic ships is flagged by python 3.12 on every run. Harmless.
 warnings.filterwarnings("ignore", message=r"invalid escape sequence",
                         category=SyntaxWarning)
 
@@ -20,56 +18,16 @@ import threading
 import time
 
 import numpy as np
-try:
-    import rospy
-except ImportError:
-    rospy = None
+from interbotix_xs_modules.arm import InterbotixManipulatorXS
 
-try:
-    import pyroki as pk
-except ImportError:
-    pk = None
-
-try:
-    from interbotix_xs_modules.arm import InterbotixManipulatorXS
-except ImportError:
-    InterbotixManipulatorXS = None
-
-try:
-    from yourdfpy import URDF
-except ImportError:
-    URDF = None
-
-if __package__:
-    from .arm_config import ARM_CONFIG, DEFAULT_RESET_POSE, POSES, URDF_PATH
-    from .data_col_config import ARM_MODES
-    from .gripper import configure_gripper, command_gripper
-else:
-    from arm_config import ARM_CONFIG, DEFAULT_RESET_POSE, POSES, URDF_PATH
-    from data_col_config import ARM_MODES
-    from gripper import configure_gripper, command_gripper
-
-## PYROKI / JAXLS CONSOLE OUTPUT
-##
-## pyroki logs through loguru, whose default sink writes coloured lines (the
-## turquoise ones) straight to stderr, at INFO.  Loading giava.urdf and
-## building the robot emits a run of them -- "joints were not in topological
-## order", per-joint parse notes -- none of which is actionable while
-## teleoperating, and all of which lands in the same scroll as the [SAFETY]
-## and [profile] lines that are.
-##
-## Suppressed, not silenced: WARNING and above still print, reformatted to
-## match the rest of this program's output instead of loguru's colours, and
-## everything below is COUNTED so solver_log_summary() can say how much was
-## hidden.  "Nothing was printed" and "nothing happened" are different
-## statements and the summary is what keeps them apart.
-##
-## GIAVA_QUIET_SOLVER=0 restores loguru's own handler untouched.
-_SOLVER_LOGS_HIDDEN = {"count": 0, "levels": {}}
+from arm_config import ARM_CONFIG, DEFAULT_RESET_POSE, POSES, URDF_PATH
+from robot_kinematics import build_robot_model, compute_fk_and_ee  # noqa: F401
+from data_col_config import ARM_MODES
+from gripper import configure_gripper, command_gripper
 
 
 def quiet_solver_logs():
-    """Drop pyroki/jaxls INFO chatter; keep warnings; count what was hidden."""
+    """Drop pyroki/jaxls INFO chatter; keep warnings."""
     if os.environ.get("GIAVA_QUIET_SOLVER", "1").strip() in ("0", "false", "no"):
         return False
     try:
@@ -77,33 +35,12 @@ def quiet_solver_logs():
     except ImportError:
         return False
 
-    def _count(message):
-        rec = message.record
-        if rec["level"].no < 30:                       # below WARNING
-            _SOLVER_LOGS_HIDDEN["count"] += 1
-            name = rec["level"].name
-            _SOLVER_LOGS_HIDDEN["levels"][name] = (
-                _SOLVER_LOGS_HIDDEN["levels"].get(name, 0) + 1)
-
     ## remove() with no argument drops loguru's default stderr sink, which is
-    ## the one printing in colour.  The two added back are independent: one
-    ## counts everything, the other prints only what matters.
+    ## the one printing in colour.
     _loguru.remove()
-    _loguru.add(_count, level="DEBUG")
     _loguru.add(lambda m: sys.stderr.write(f"[solver] {m.record['message']}\n"),
                 level="WARNING")
     return True
-
-
-def solver_log_summary():
-    """One line about what quiet_solver_logs() hid, or None."""
-    n = _SOLVER_LOGS_HIDDEN["count"]
-    if not n:
-        return None
-    detail = ", ".join(f"{k.lower()} {v}" for k, v in
-                       sorted(_SOLVER_LOGS_HIDDEN["levels"].items()))
-    return (f"[solver] {n} pyroki/urdf message(s) hidden ({detail}); "
-            f"GIAVA_QUIET_SOLVER=0 to see them")
 
 
 ## MOVE SPEED.  `cruise_speed` is a peak JOINT speed in rad/s and 1.2 was a
@@ -211,8 +148,6 @@ def _quiet_sdk():
 
 # Robot creation
 def create_robot(arm_name, moving_time=0.14, accel_time=0.04):
-    if InterbotixManipulatorXS is None:
-        raise ImportError("interbotix_xs_modules is required to create robots.")
     cfg = ARM_CONFIG[arm_name]
 
     with _quiet_sdk():
@@ -232,39 +167,14 @@ def _create_robot_inner(arm_name, cfg, moving_time, accel_time):
     
 
 def create_and_configure_robot(arm_name, moving_time=0.14, accel_time=0.04):
-    # print(f"In function call create_and_configure_robot with arm_name: {arm_name}")
     bot = create_robot(arm_name, moving_time, accel_time)
 
-    if arm_name == "middle":
-        if rospy is None:
-            raise ImportError("rospy is required to configure the middle arm.")
-        # Torque on only -- do NOT set operating modes here.
-        #
-        # robot_set_operating_modes torques EVERY motor off to write the
-        # EEPROM mode registers, then torques back on (xs_sdk_obj.cpp,
-        # robot_set_joint_operating_mode: "torqued off").  Under gravity that
-        # is the visible ~1 cm sag the middle arm showed at every program
-        # start.  Modes are now set once at launch by puppet_modes_middle.yaml
-        # (same as left/right), so the per-run write was redundant EEPROM wear
-        # plus a mechanical glitch.  Torque-enable alone is idempotent: writing
-        # 1 to an already-torqued motor causes no blip.
-        bot.dxl.robot_torque_enable("group", "arm", True)
-        rospy.sleep(0.2)
-
-    # print(f"Created robot for arm: {arm_name}")
     if ARM_CONFIG[arm_name]["has_gripper"]:
-        # print(f"Configuring gripper for arm: {arm_name}")
         configure_gripper(bot, ARM_CONFIG[arm_name]["robot_name"])
-    if QUIET_SDK:
-        print(f"[arm] {arm_name} ready "
-              f"({ARM_CONFIG[arm_name]['robot_model']}"
-              + ("" if ARM_CONFIG[arm_name]["has_gripper"] else ", no gripper")
-              + ")")
     return bot
 
 
 def create_and_configure_robots(arm_names=("left", "right", "middle")):
-    # print(f"In function call create_and_configure_robots with arm_names: {arm_names}")
     return {arm_name: create_and_configure_robot(arm_name) for arm_name in arm_names}
 
 
@@ -291,12 +201,7 @@ def apply_profile_limits(robots, cfg, arm_names=None, verbose=True):
 
     Returns {arm: (mode, pv, pa)}.
     """
-    try:
-        from .servo_health import (profile_limits, read_profile_modes,
-                                   summarize_profiles)
-    except ImportError:
-        from servo_health import (profile_limits, read_profile_modes,
-                                  summarize_profiles)
+    from servo_health import (profile_limits, read_profile_modes, summarize_profiles)
 
     arm_names = list(arm_names or robots.keys())
     found = {}
@@ -314,12 +219,11 @@ def apply_profile_limits(robots, cfg, arm_names=None, verbose=True):
                 print(f"[profile] {arm}: no motor answered -- profile unknown")
             continue
         found[arm] = (mode, pv, pa)
-        ## A group whose joints run DIFFERENT profiles, named.  This is not
-        ## hypothetical: puppet_modes_middle.yaml overrides `waist` and
-        ## `camera_yaw` to a time-based profile under `singles:` while the
-        ## `arm` group stays velocity-based.  summarize_profiles() resolves it
-        ## to the binding (velocity) case, but the operator should know the
-        ## yaml and the clamp are describing different things.
+        ## Name a group whose joints run DIFFERENT profiles.  Real, not
+        ## hypothetical: puppet_modes_middle.yaml puts `waist` and `camera_yaw`
+        ## on a time-based profile while the `arm` group stays velocity-based.
+        ## summarize_profiles() reports the binding (velocity) case, so the
+        ## yaml and the clamp can be describing different things.
         if verbose and len({m for m, _, _ in per.values()}) > 1:
             _by = {}
             for _j, (_m, _, _) in sorted(per.items()):
@@ -379,8 +283,7 @@ def apply_profile_limits(robots, cfg, arm_names=None, verbose=True):
 
 
 def get_joint_positions(bot):
-    return np.array(bot.arm.core.joint_states.position[:len(bot.arm.group_info.joint_names)], 
-                    dtype=float)
+    return np.array(bot.arm.core.joint_states.position[:len(bot.arm.group_info.joint_names)], dtype=float)
 
 def sync_robot_state(robots,
     robot,
@@ -495,10 +398,7 @@ def command_state_is_stale(
         max_error = float(err[k])
 
         if max_error > tolerance:
-            ## Name the joint and both values.  "max difference = 4.071 rad"
-            ## is true and useless: a torque-loss collapse and a 2pi encoder
-            ## wrap print the same line, and which one it is decides whether
-            ## the right move is 'reboot' or 'i'.
+            # 
             names = ARM_CONFIG[arm]["joint_names"]
             joint = names[k] if k < len(names) else f"joint {k}"
             print(
@@ -507,13 +407,7 @@ def command_state_is_stale(
                 f"(difference {max_error:.3f} rad; "
                 f"largest of {len(err)} joints)."
             )
-            ## Not an error by itself: this is the expected line after the arm
-            ## moved OUTSIDE this loop -- move_arms.py from another terminal,
-            ## hand-guiding with torque off, a servo reboot.  The loop sends
-            ## nothing while idle, and the caller re-anchors from measured
-            ## joints before anything is sent, so there is no snap-back.  It
-            ## is only alarming if nobody moved the arm: then it means torque
-            ## loss or an encoder wrap, and 'reboot' / 'i' are the tools.
+            # Will print a warning if arm configuration is far from expected configuration
             print(f"        (expected if {arm} was just moved externally -- "
                   f"move_arms.py, hand-guiding, or a reboot; re-anchoring "
                   f"from measured joints, no snap-back. If NOBODY moved it, "
@@ -522,59 +416,17 @@ def command_state_is_stale(
 
     return False
 
-# Motion
-
-# Moves all arms simultaneously but does  not properly break the motion into segments
-# def interpolate_to_pose(bot, pose, moving_time=3.0, accel_time=1.5, blocking=True):
-#     current_q = get_joint_positions(bot)
-#     target_q = np.asarray(pose, dtype=float)
-#     delta = np.abs(target_q - current_q)
-#     num_steps = max(1, int(np.ceil(np.max(delta / REPLAY_MAX_JOINT_STEP))))
-#     waypoints = np.linspace(current_q, target_q, num_steps + 1)[1:]
-#     segment_time = max(0.25, moving_time / num_steps)
-#     segment_accel = min(accel_time / num_steps, 0.5 * segment_time)
-
-#     print(f"max_delta={np.max(delta):.3f}, num_steps={num_steps}, segment_time={segment_time:.3f}")
-
-#     for i, q in enumerate(waypoints):
-#         bot.arm.set_joint_positions(q.tolist(), moving_time=segment_time, accel_time=segment_accel, blocking=(blocking and i == len(waypoints) - 1))
-
 def interpolate_to_pose(bot, arm, pose, moving_time=0.2, accel_time=0.1,
                         blocking=True, cruise_speed=None, accel_frac=0.25):
-    """Move ONE arm to `pose` on a single continuous trapezoid.
+    """ 
+    Previous implementation split the motion in to waypoints and sent each one as a complete move
+    This means the motors will accelerate and decelerate to get to each waypoint
+    Now it establishes a single start and delta and hands it to stream profile which sets one
+    acceleration at the start, one deceleration at the end, and constant velocity in between
 
-    WHAT THIS USED TO DO, AND WHY IT PULSED
-    ========================================
-    It split the motion into waypoints and sent each one as its own
-    completed move:
-
-        num_steps = ceil(max|delta| / max_joint_step)
-        for q in linspace(current, target, num_steps + 1)[1:]:
-            set_joint_positions(q, moving_time=0.2, accel_time=0.1,
-                                blocking=True)          # rospy.sleep(0.2)
-
-    Every waypoint was a separate profile with its own acceleration AND its
-    own deceleration -- accel_time 0.1 is half of moving_time 0.2, i.e. a
-    fully triangular profile -- so the arm ramped up and back down to ZERO
-    velocity at each one.  That is the visible pulsing, and no amount of
-    shrinking the step fixes it: each command still asks the servo to arrive
-    and stop.  `blocking=True` on top of that made the caller sleep, which is
-    why looping over arms moved them one at a time.
-
-    Now it builds a single (start, delta) plan and hands it to
-    `_stream_profile`, the same primitive `move_arms_together` uses -- one
-    acceleration at the start, one deceleration at the end, constant velocity
-    in between.
-
-    `moving_time` / `accel_time` are ACCEPTED AND IGNORED, on purpose: every
-    existing caller passes them, and silently changing what they mean would
-    be worse than visibly not using them.  Shape the motion with
-    `cruise_speed` [rad/s peak joint speed] and `accel_frac` [fraction of the
-    move spent ramping] instead.  On this robot they would not have meant
-    what they say anyway -- the group runs a velocity-based profile, where
-    Profile_Velocity is a cap rather than a duration.
-
-    `blocking=False` runs the stream on a daemon thread and returns at once.
+    I also changed the arms to use the velocity based profile where maximum velocity is the limit
+    as oposed to having duration as the limit. Moreover, blocking can be set to False runs the 
+    stream on a daemon thread and returns at once.
     """
     del moving_time, accel_time                 # see the docstring
     prepared = _prepare_move_target(bot, arm, pose)
@@ -590,11 +442,10 @@ def interpolate_to_pose(bot, arm, pose, moving_time=0.2, accel_time=0.1,
               settle_s=0.5, settle_tol=0.05, verbose=True)
     if blocking:
         return _stream_profile(robots, plans, **kw)
-    ## Daemon thread: dies WITH the process, wherever the stream happens to
+    ## Daemon thread dies WITH the process, wherever the stream happens to
     ## be.  Any caller whose process may exit before the move ends must join
-    ## the returned thread, or the arm is left mid-trajectory (move_arms.py
-    ## learned this on hardware, 2026-09-01 -- it now uses
-    ## move_arms_together instead).
+    ## the returned thread, or the arm is left mid-trajectory. It now uses
+    ## move_arms_together instead.
     t = threading.Thread(target=_stream_profile, args=(robots, plans),
                          kwargs=kw, daemon=True)
     t.start()
@@ -608,10 +459,10 @@ def reset_arm(bot, arm_name, pose_name=DEFAULT_RESET_POSE):
     move_to_named_pose(bot, arm_name, pose_name)
 
 def reset_arms(robots, pose_name=DEFAULT_RESET_POSE, together=True, **kwargs):
-    """Park every arm.  Simultaneous and continuous by default.
+    """Move every arm to rest pose.  Simultaneous and continuous by default.
 
-    `together=False` restores the old one-arm-at-a-time, waypoint-by-waypoint
-    behaviour -- keep it for the case where an arm must be watched alone."""
+    `together=False` restores the old behavior in cases where an arm must 
+    be watched alone."""
     if together:
         return move_to_named_poses(robots, pose_name, **kwargs)
     for arm_name, bot in robots.items():
@@ -660,61 +511,18 @@ def _prepare_move_target(bot, arm_name, pose):
 def move_arms_together(robots, targets, cruise_speed=None, accel_frac=0.25,
                        rate_hz=50.0, settle_s=0.5, settle_tol=0.05,
                        verbose=True):
-    """Drive every arm to its target SIMULTANEOUSLY, on one continuous ramp.
+    """Drive every arm to its target simultaneously, on one continuous ramp.
 
-    WHAT THIS REPLACES, AND WHY
-    ============================
-    `reset_arms` looped the arms and called `interpolate_to_pose` on each,
-    which does
+    Every arm is commanded each tick (`blocking=False`) along one shared path
+    parameter s(t) with a trapezoidal velocity profile, so they start, cruise
+    and arrive together and no joint finishes early.  Duration comes from the
+    largest joint motion anywhere in the robot, making `cruise_speed` [rad/s] a
+    real peak-joint-speed bound rather than a fixed duration.
 
-        for q in waypoints:
-            set_joint_positions(q, moving_time=0.2, accel_time=0.1,
-                                blocking=True)      # rospy.sleep(0.2)
-
-    Two separate problems, both visible on the hardware:
-
-      SERIAL ARMS.  `blocking=True` sleeps the calling thread, so arm 2 does
-      not get its first command until arm 1 has finished every waypoint.
-
-      STOP-START.  Each waypoint is its OWN profile with its own accel and
-      decel (accel_time 0.1 = half of moving_time 0.2, i.e. a fully
-      triangular profile), so the arm ramps up and back down to ZERO on
-      every single waypoint.  The motion visibly pulses.  Sending waypoints
-      faster does not fix it -- each command still asks the servo to arrive
-      and stop.
-
-    WHAT THIS DOES INSTEAD
-    =======================
-    One clock, one shared path parameter s(t) in [0, 1], every arm commanded
-    every tick with `blocking=False`:
-
-        q_arm(t) = start_arm + s(t) * (target_arm - start_arm)
-
-    s(t) is a TRAPEZOIDAL VELOCITY profile: a short accel ramp, a long
-    constant-velocity cruise, a short decel ramp.  `accel_frac` is the
-    fraction of the total duration spent ramping (0.25 => 12.5% at each end,
-    75% at constant speed), so "constant velocity as much as possible" is
-    literally the knob.  Because every arm shares s(t), they start together,
-    cruise together, and arrive together -- and because each joint's own
-    delta is scaled by the same s, the whole robot travels a straight line
-    in joint space with no joint finishing early.
-
-    The duration comes from the LARGEST joint motion anywhere in the robot:
-
-        T = max|delta| / (cruise_speed * (1 - accel_frac/2))
-
-    so `cruise_speed` [rad/s] is a real peak-joint-speed bound, and a small
-    move takes proportionally less time than a big one rather than being
-    stretched to a fixed duration.
-
-    NOTE ON moving_time: this passes None, so `set_trajectory_time` does not
-    write anything.  That matters on this robot -- the group runs a
-    VELOCITY-based profile, where Profile_Velocity is a speed CAP and not a
-    duration, so a per-call moving_time would silently re-cap the servos
-    (see servo_health.check_profile).  The servo's own profile stays exactly
-    as configured and simply tracks the stream of setpoints; keep
-    `cruise_speed` below that cap or the servo, not this function, sets the
-    pace.
+    Passes moving_time=None deliberately: the group runs a VELOCITY-based
+    profile where Profile_Velocity is a speed CAP, not a duration, so writing
+    one per call would silently re-cap the servos (see
+    servo_health.check_profile).  Keep `cruise_speed` below that cap.
 
     Returns the set of arms that actually moved.
     """
@@ -747,10 +555,8 @@ def _stream_profile(robots, plans, cruise_speed, accel_frac, rate_hz,
                     settle_s, settle_tol, verbose):
     """Drive {arm: (start_q, delta)} along one shared trapezoid.
 
-    THE SINGLE MOTION PRIMITIVE.  Both `move_arms_together` and
-    `interpolate_to_pose` funnel here, so a one-arm move and a three-arm move
-    are the same code path with the same profile -- there is no "the smooth
-    one" and "the old one" to drift apart.
+    The single motion primitive: `move_arms_together` and `interpolate_to_pose`
+    both funnel here, so one-arm and three-arm moves share one code path.
     """
     if not plans:
         return set()
@@ -795,12 +601,6 @@ def _stream_profile(robots, plans, cruise_speed, accel_frac, rate_hz,
         s = s_of(t)
         for arm_name, (start_q, delta) in plans.items():
             q = start_q + s * delta
-            ## blocking=False and moving_time=None: no sleep, no register
-            ## write.  Every arm is commanded inside the same tick, and the
-            ## servo's own profile is left exactly as configured -- which
-            ## matters here, because on this robot Profile_Velocity is a
-            ## SPEED CAP, not a duration (see servo_health.check_profile),
-            ## so passing a moving_time would silently re-cap the motors.
             ok = robots[arm_name].arm.set_joint_positions(
                 q.tolist(), moving_time=None, accel_time=None, blocking=False)
             if ok is False:
@@ -1006,16 +806,6 @@ def replay_arm_command(bot, target_q, moving_time=0.03, accel_time=0.01):
              float(np.max(np.abs(target_q[:n] - ref) / np.maximum(0.7 * vel,
                                                                   1e-6))))
     for _ in range(4):
-        ## set_trajectory_time BEFORE the send, not moving_time= on the send:
-        ## check_joint_limits divides by the STORED self.moving_time, and the
-        ## moving_time argument reaches it only via publish_positions --
-        ## which runs only AFTER a command passes the check.  Passing a
-        ## stretched value on a refused command therefore never touches the
-        ## number the refusal was computed with (hardware, 2026-09-01: every
-        ## escalation was re-judged at the stale 0.03 s and refused
-        ## identically, so whole replays still wedged).  The next accepted
-        ## fast-path frame passes moving_time=0.03 and restores the timing
-        ## through the same publish_positions route.
         bot.arm.set_trajectory_time(mt, min(accel_time, 0.5 * mt))
         if bot.arm.set_joint_positions(
                 target_q.tolist(),
@@ -1067,60 +857,6 @@ def safe_move_arm_joints(bot, target_q, total_time=3.0, step_time=0.25, accel_ra
 
     for q_cmd in waypoints:
         bot.arm.set_joint_positions(q_cmd.tolist(), moving_time=move_t, accel_time=accel_t, blocking=True)
-
-def build_robot_model(mode_idx):
-    if URDF is None or pk is None:
-        raise ImportError("yourdfpy and pyroki are required to build the robot model.")
-    urdf = URDF.load(URDF_PATH)
-    robot = pk.Robot.from_urdf(urdf)
-
-    # print("Actuated joints in URDF:")
-    # print(robot.joints.actuated_names)
-
-    arm_data = {}
-
-    for arm in ARM_MODES[mode_idx]:
-        cfg = ARM_CONFIG[arm]
-
-        # print(f"\nChecking arm: {arm}")
-        # print("Expected joints:")
-        # print(cfg["joint_names"])
-
-        joint_indices = [
-            robot.joints.actuated_names.index(name)
-            for name in cfg["joint_names"]
-        ]
-        # Per-arm position limits, used to keep commands inside what the driver
-        # will accept (it rejects the whole group command otherwise).
-        arm_data[arm] = {
-            "joint_indices": joint_indices,
-            "ee_index": robot.links.names.index(cfg["ee_link"]),
-            "lower_limits": np.asarray(robot.joints.lower_limits, dtype=float)[joint_indices],
-            "upper_limits": np.asarray(robot.joints.upper_limits, dtype=float)[joint_indices],
-        }
-
-    return robot, arm_data
-
-# def build_robot_model(mode_idx):
-#     urdf = URDF.load(URDF_PATH)
-#     robot = pk.Robot.from_urdf(urdf)
-
-#     arm_data = {}
-
-#     for arm in ARM_MODES[mode_idx]:
-#         cfg = ARM_CONFIG[arm]
-
-#         arm_data[arm] = {
-#             "joint_indices": [
-#                 robot.joints.actuated_names.index(name)
-#                 for name in cfg["joint_names"]
-#             ],
-#             "ee_index": robot.links.names.index(
-#                 cfg["ee_link"]
-#             ),
-#         }
-
-#     return robot, arm_data
 
 # Middle-waist frame shift, in radians, mirroring the servo's Homing_Offset
 # register (reported = actual + offset).  The pose tables in arm_config.py
@@ -1311,7 +1047,3 @@ def get_pose(arm_name, pose_name):
         pose[0] = (pose[0] + np.pi) % (2 * np.pi) - np.pi
     return pose
 
-def compute_fk_and_ee(robot, q, arm_data):
-    fk = robot.forward_kinematics(q)
-    ee_positions = {arm: fk[arm_data[arm]["ee_index"]] for arm in arm_data}
-    return fk, ee_positions

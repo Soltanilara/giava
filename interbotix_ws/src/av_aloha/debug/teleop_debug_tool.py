@@ -34,10 +34,7 @@ import _giava_paths  # noqa: F401  (puts the shared giava trees on sys.path)
 
 import argparse
 
-try:
-    from .paths import URDF_PATH as _PATHS_URDF
-except ImportError:  # run as a script, not a package member
-    from paths import URDF_PATH as _PATHS_URDF
+from paths import URDF_PATH as _PATHS_URDF
 import json
 import os
 import sys

@@ -58,10 +58,7 @@ from tube_mpc.model import JointLimits, KinematicModel
 from tube_mpc.reference import decayed_velocity_reference, hold_reference
 from tube_mpc.urdf_limits import parse_urdf_limits
 
-try:
-    from .paths import TUBE_MPC_CONFIG as _TUBE_MPC_CONFIG
-except ImportError:  # run as a script, not a package member
-    from paths import TUBE_MPC_CONFIG as _TUBE_MPC_CONFIG
+from paths import TUBE_MPC_CONFIG as _TUBE_MPC_CONFIG
 
 DEFAULT_CONFIG = str(_TUBE_MPC_CONFIG)
 PREFIX_OF = {"left": "left_", "right": "right_", "middle": "middle_"}

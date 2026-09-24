@@ -216,3 +216,22 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Bulk data kept on disk but never tracked.  old_dataset/ alone is 51 GB with
+# zero tracked files, so without this git rescans it on every status -- and a
+# stray `git add -A` would try to stage all of it.
+old_dataset/
+data/archive/
+
+## Reorganised 2026-09-12: heavy generated trees + editor/OS droppings.
+.DS_Store
+interbotix_ws/src/av_aloha/data_collection_scripts/rollouts/
+interbotix_ws/src/av_aloha/rgbd/outputs/
+
+## Generated run data (2026-09-16): big, regenerable, not source.
+interbotix_ws/src/av_aloha/calibration/data/oak_calib/
+interbotix_ws/src/av_aloha/debug/bench_logs/
+interbotix_ws/src/av_aloha/data_collection_scripts/fault_logs/
+interbotix_ws/src/av_aloha/data_collection_scripts/trajectories/
+interbotix_ws/src/av_aloha/data_collection_scripts/timing_logs/
+interbotix_ws/src/av_aloha/data_collection_scripts/ros_ik_trajectory_logs/

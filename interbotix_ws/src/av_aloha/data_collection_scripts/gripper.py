@@ -37,38 +37,29 @@ def reboot_gripper(bot, sleep_time=1.0):
 def set_register(robot_name, motor_name, reg_name, value):
     if rospy is None or RegisterValues is None or RegisterValuesRequest is None:
         raise ImportError("rospy and interbotix_xs_msgs are required to set gripper registers.")
-    # print("Inside function set_register")
     service_name = f"/{robot_name}/set_motor_registers"
     rospy.wait_for_service(service_name)
     srv = rospy.ServiceProxy(service_name, RegisterValues)
-    # print(f"Calling service {service_name} to set register {reg_name} to value {value}")
 
     req = RegisterValuesRequest()
-    # print(f"Created RegisterValuesRequest: {req}")
     req.cmd_type = "single"
     req.name = motor_name
     req.reg = reg_name
     req.value = value
-    # print(f"Request prepared: {req}")
     return srv(req)
 
 # Configure gripper current limit and operating mode.
 def configure_gripper(bot, robot_name):
     if rospy is None:
         raise ImportError("rospy is required to configure the gripper.")
-    # print("Inside function configure_gripper")
     bot.dxl.robot_torque_enable("single", "gripper", False)
-    # print("Torque disabled for gripper")
     rospy.sleep(0.2)
     
     set_register(robot_name, "gripper", "Current_Limit", GRIPPER_CURRENT_LIMIT)
-    # print(f"Setting gripper current limit to {GRIPPER_CURRENT_LIMIT}")
     rospy.sleep(0.2)
 
     bot.dxl.robot_set_operating_modes("single", "gripper", "current_based_position")
-    # print("Setting gripper operating mode to current-based position control")
     bot.dxl.robot_torque_enable("single", "gripper", True)
-    # print("Torque enabled for gripper")
     rospy.sleep(0.5)
 
 # Open or close the gripper based on trigger state.
@@ -78,36 +69,11 @@ def update_gripper(bot, trigger_pressed, close_position=GRIPPER_CLOSED, open_pos
     return position
 
 
-## ---------------------------------------------------------------------------
-## CONTINUOUS (ANALOG) GRIPPER
-##
-## The index trigger is an analog axis (0..1) but the historical mapping
-## thresholded it at zero: any deflection = full close.  That throws away the
-## aperture channel entirely -- the recorded gripper action is binary, so a
-## policy trained on it can never learn a gentle or partial grasp.
-##
-##   GIAVA_GRIPPER_MODE=binary   (default) the historical behaviour, unchanged
-##   GIAVA_GRIPPER_MODE=analog   trigger deflection maps linearly to aperture
-##
-## The analog map, and why each piece exists:
-##
-##   deadzone (bottom GIAVA_GRIPPER_DEADZONE of travel, default 0.08)
-##       resting a finger on the trigger reads a few percent; without a
-##       deadzone the gripper never fully opens.
-##   saturation (top of travel above GIAVA_GRIPPER_LATCH, default 0.85)
-##       holding a trigger at an exact deflection is hard; holding it FULLY
-##       pulled is easy.  Everything above the latch point is full close, so a
-##       firm grip -- commanded past the object's width, which is what
-##       produces grip force in current_based_position mode -- costs no
-##       precision.  Between deadzone and latch the map is linear, so partial
-##       apertures live in the comfortable middle of the trigger's travel.
-##   EMA (GIAVA_GRIPPER_ALPHA, default 0.4)
-##       trigger jitter at 25-50 Hz otherwise becomes gripper chatter.  The
-##       smoothed COMMAND is also the recorded action, so what the dataset
-##       stores is exactly what the servo was asked to do.
-##
-## The return value is the commanded position (same contract as
-## update_gripper), which data_collection.py records as the action.
+## Optional analog gripper: trigger deflection (0..1) -> aperture, instead of
+## the default binary threshold.  Deadzone ignores a resting finger, everything
+## above the latch is full close (a firm grip needs no precision), EMA kills
+## trigger chatter.  Never used in a recorded session -- every dataset to date
+## is GIAVA_GRIPPER_MODE=binary.
 GRIPPER_MODE = os.environ.get("GIAVA_GRIPPER_MODE", "binary").strip().lower()
 GRIPPER_ANALOG_DEADZONE = float(os.environ.get("GIAVA_GRIPPER_DEADZONE", "0.08"))
 GRIPPER_ANALOG_LATCH = float(os.environ.get("GIAVA_GRIPPER_LATCH", "0.85"))

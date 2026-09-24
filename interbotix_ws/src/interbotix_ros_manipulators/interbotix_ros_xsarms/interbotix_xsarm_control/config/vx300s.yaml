@@ -45,7 +45,7 @@ motors:
     Return_Delay_Time: 0
     Drive_Mode: 1
     Velocity_Limit: 131
-    Min_Position_Limit: 841
+    Min_Position_Limit: 773   # widened from 841 (-112 deg, matches URDF 2026-08)
     Max_Position_Limit: 2867
     Secondary_ID: 255
 
@@ -55,7 +55,7 @@ motors:
     Return_Delay_Time: 0
     Drive_Mode: 0
     Velocity_Limit: 131
-    Min_Position_Limit: 841
+    Min_Position_Limit: 773   # widened from 841 (-112 deg, matches URDF 2026-08)
     Max_Position_Limit: 2867
     Secondary_ID: 2
 
@@ -66,7 +66,7 @@ motors:
     Drive_Mode: 1
     Velocity_Limit: 131
     Min_Position_Limit: 898
-    Max_Position_Limit: 3094
+    Max_Position_Limit: 3163   # widened from 3094 (+98 deg, matches URDF 2026-08)
     Secondary_ID: 255
 
   elbow_shadow:
@@ -76,7 +76,7 @@ motors:
     Drive_Mode: 0
     Velocity_Limit: 131
     Min_Position_Limit: 898
-    Max_Position_Limit: 3094
+    Max_Position_Limit: 3163   # widened from 3094 (+98 deg, matches URDF 2026-08)
     Secondary_ID: 4
 
   forearm_roll:

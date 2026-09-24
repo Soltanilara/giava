@@ -19,10 +19,7 @@ import argparse
 import json
 import time
 
-if __package__:
-    from .dataset import load_outcomes
-else:
-    from dataset import load_outcomes
+from dataset import load_outcomes
 
 
 def episode_lengths(root):

@@ -239,11 +239,11 @@ def run() -> None:
     frames = RobotFrames()
     q_home = frames.home_q()
 
-    @check("FK agrees with the deployed robot_control.compute_fk_and_ee")
+    @check("FK agrees with the deployed robot_kinematics.compute_fk_and_ee")
     def _():
         ## The strongest check available: the same numbers the data
         ## collection loop uses, through a different code path.
-        from robot_control import compute_fk_and_ee
+        from robot_kinematics import compute_fk_and_ee
         arm_data = {a: {"ee_index": frames.link_names.index(
             ARM_CONFIG[a]["ee_link"])} for a in ("left", "right", "middle")}
         _, ee = compute_fk_and_ee(frames.robot,

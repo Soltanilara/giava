@@ -64,18 +64,11 @@ import time
 ## import, so setting it later would silently do nothing while the startup
 ## banner claimed otherwise.  Same ordering constraint, same reason, as
 ## data_collection.py.  See collision_modes.py.
-try:
-    from .collision_modes import banner as _collision_banner
-    from .collision_modes import select as _collision_select
-    from .collision_modes import select_table as _table_select
-    from .collision_modes import take_option as _take_option
-    from .jax_platform import select as _jax_select
-except ImportError:
-    from collision_modes import banner as _collision_banner
-    from collision_modes import select as _collision_select
-    from collision_modes import select_table as _table_select
-    from collision_modes import take_option as _take_option
-    from jax_platform import select as _jax_select
+from collision_modes import banner as _collision_banner
+from collision_modes import select as _collision_select
+from collision_modes import select_table as _table_select
+from collision_modes import take_option as _take_option
+from jax_platform import select as _jax_select
 
 COLLISION_MODE = _collision_select()
 TABLE_MODE = _table_select()
@@ -145,120 +138,62 @@ try:
 except ImportError:
     rospy = None
 
-if __package__:
-    from .arm_config import ARM_CONFIG, POSES, URDF_PATH
-    from .camera_manager import (
-        adjust_eye_view,
-        install_rectify_from_npz,
-        oak_stream_settings,
-        oak_swap_eyes,
-        request_oak_capture,
-        setup_cameras,
-        take_oak_capture,
-    )
-    from .data_col_config import (
-        ARM_MODES,
-        ArmTeleopState,
-        CommandKinematicsState,
-        LinkGuard,
-        RobotCommandState,
-        TeleopConfig,
-        TeleopSessionState,
-        anchor_arm_state,
-        clamp_joint_step,
-        compute_camera_arm_target,
-        compute_gripper_arm_target,
-        start_teleop_session,
-        stop_teleop_session,
-    )
-    from .gripper import update_gripper, update_gripper_from_trigger
-    from .headset_link import make_headset
-    from .robot_control import (
-        apply_profile_limits,
-        build_robot_model,
-        command_state_is_stale,
-        compute_fk_and_ee,
-        create_and_configure_robots,
-        move_to_named_pose,
-        move_to_named_poses,
-        resolve_middle_waist_shift,
-        reset_arms,
-        sync_robot_state,
-    )
-    from .stereo_calib_live import (
-        CoverageTracker,
-        board_metrics,
-        calibrate_now,
-        disparity_sign,
-        handedness_warning,
-        summarise_fit,
-    )
-    from .servo_health import FaultRecorder, OverloadEstimator, ServoWatchdog
-    from .servo_health import check_profile as servo_check_profile
-    from .servo_health import decode as servo_decode
-    from .servo_health import check_shadows as servo_check_shadows
-    from .servo_health import read_hardware_errors as servo_read_errors
-    from .servo_health import recover as servo_recover
-    from .servo_health import report as servo_report
-    from .study_ik import COLLISION_MARGIN, CoupledStudyIK
-    from .transform_utils import pose2mat
-else:
-    from arm_config import ARM_CONFIG, POSES, URDF_PATH
-    from camera_manager import (
-        adjust_eye_view,
-        install_rectify_from_npz,
-        oak_stream_settings,
-        oak_swap_eyes,
-        request_oak_capture,
-        setup_cameras,
-        take_oak_capture,
-    )
-    from data_col_config import (
-        ARM_MODES,
-        ArmTeleopState,
-        CommandKinematicsState,
-        LinkGuard,
-        RobotCommandState,
-        TeleopConfig,
-        TeleopSessionState,
-        anchor_arm_state,
-        clamp_joint_step,
-        compute_camera_arm_target,
-        compute_gripper_arm_target,
-        start_teleop_session,
-        stop_teleop_session,
-    )
-    from gripper import update_gripper, update_gripper_from_trigger
-    from headset_link import make_headset
-    from robot_control import (
-        apply_profile_limits,
-        build_robot_model,
-        command_state_is_stale,
-        compute_fk_and_ee,
-        create_and_configure_robots,
-        move_to_named_pose,
-        move_to_named_poses,
-        resolve_middle_waist_shift,
-        reset_arms,
-        sync_robot_state,
-    )
-    from stereo_calib_live import (
-        CoverageTracker,
-        board_metrics,
-        calibrate_now,
-        disparity_sign,
-        handedness_warning,
-        summarise_fit,
-    )
-    from servo_health import FaultRecorder, OverloadEstimator, ServoWatchdog
-    from servo_health import check_profile as servo_check_profile
-    from servo_health import decode as servo_decode
-    from servo_health import check_shadows as servo_check_shadows
-    from servo_health import read_hardware_errors as servo_read_errors
-    from servo_health import recover as servo_recover
-    from servo_health import report as servo_report
-    from study_ik import COLLISION_MARGIN, CoupledStudyIK
-    from transform_utils import pose2mat
+from arm_config import ARM_CONFIG, POSES, URDF_PATH
+from camera_manager import (
+    adjust_eye_view,
+    install_rectify_from_npz,
+    oak_stream_settings,
+    oak_swap_eyes,
+    request_oak_capture,
+    setup_cameras,
+    take_oak_capture,
+)
+from data_col_config import (
+    ARM_MODES,
+    ArmTeleopState,
+    CommandKinematicsState,
+    LinkGuard,
+    RobotCommandState,
+    TeleopConfig,
+    TeleopSessionState,
+    anchor_arm_state,
+    clamp_joint_step,
+    compute_camera_arm_target,
+    compute_gripper_arm_target,
+    start_teleop_session,
+    stop_teleop_session,
+)
+from gripper import update_gripper, update_gripper_from_trigger
+from headset_link import make_headset
+from robot_control import (
+    apply_profile_limits,
+    build_robot_model,
+    command_state_is_stale,
+    compute_fk_and_ee,
+    create_and_configure_robots,
+    move_to_named_pose,
+    move_to_named_poses,
+    resolve_middle_waist_shift,
+    reset_arms,
+    sync_robot_state,
+)
+from stereo_calib_live import (
+    CoverageTracker,
+    board_metrics,
+    calibrate_now,
+    disparity_sign,
+    handedness_warning,
+    summarise_fit,
+)
+from servo_health import FaultRecorder, OverloadEstimator, ServoWatchdog
+from servo_health import check_profile as servo_check_profile
+from servo_health import decode as servo_decode
+from servo_health import check_shadows as servo_check_shadows
+from servo_health import read_hardware_errors as servo_read_errors
+from servo_health import recover as servo_recover
+from servo_health import report as servo_report
+from study_ik import COLLISION_MARGIN, CoupledStudyIK
+from transform_utils import pose2mat
 
 
 HERE = Path(__file__).resolve().parent
@@ -657,12 +592,8 @@ def main():
     ## Both hard gates run on the FINAL clamped command, after the solver and
     ## after every clamp -- see capsule_gate.py / table_gate.py.  They are the
     ## reason a teleop-only script is still safe to leave running.
-    try:
-        from .capsule_gate import build_gate as _build_capsule_gate
-        from .table_gate import build_gate as _build_table_gate
-    except ImportError:
-        from capsule_gate import build_gate as _build_capsule_gate
-        from table_gate import build_gate as _build_table_gate
+    from capsule_gate import build_gate as _build_capsule_gate
+    from table_gate import build_gate as _build_table_gate
     from yourdfpy import URDF as _URDF_for_gate
     _urdf_for_gates = _URDF_for_gate.load(URDF_PATH)
     capsule_gate = _build_capsule_gate(robot, _urdf_for_gates)

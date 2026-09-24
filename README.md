@@ -99,7 +99,7 @@ conda activate gym_av
 
 If creating the environment manually:
 
-conda create -n gym_av python=3.10
+conda create -n gym_av python=3.12
 
 conda activate gym_av
 4. Install Python Dependencies
@@ -108,7 +108,7 @@ pip install -r requirements.txt
 Additional packages requiring manual installation:
 
 LeRobot
-pip install git+https://github.com/huggingface/lerobot.git@483be9aac217c2d8ef16982490f22b2ad091ab46
+pip install lerobot==0.6.0
 aiortc
 
 The VR teleoperation stack requires a patched fork of aiortc.

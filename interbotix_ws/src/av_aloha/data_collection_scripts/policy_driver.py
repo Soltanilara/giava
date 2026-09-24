@@ -258,10 +258,7 @@ def _canon(value, reference):
 
 def _state_index(arm_names, joint_name):
     """Index of `joint_name` in the recorder's concatenated state vector."""
-    try:
-        from .arm_config import ARM_CONFIG
-    except ImportError:
-        from arm_config import ARM_CONFIG
+    from arm_config import ARM_CONFIG
     i = 0
     for arm in arm_names:
         for jn in ARM_CONFIG[arm]["joint_names"]:
@@ -275,10 +272,7 @@ def _state_index(arm_names, joint_name):
 
 def arm_slices(arm_names):
     """{arm: (slice for joints, gripper index or None)} in recorder layout."""
-    try:
-        from .arm_config import ARM_CONFIG
-    except ImportError:
-        from arm_config import ARM_CONFIG
+    from arm_config import ARM_CONFIG
     out, i = {}, 0
     for arm in arm_names:
         n = ARM_CONFIG[arm]["num_joints"]

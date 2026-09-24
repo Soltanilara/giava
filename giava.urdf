@@ -204,7 +204,16 @@
     <dynamics damping="1.200000" />
     <limit lower="-3.141580" upper="3.141580" velocity="3.141592653589793"/>
   </joint>
-  <link name="right_gripper_base">
+  <!-- Split from right_gripper_base 2026-09-02: the prop and bar meshes sit
+       at IDENTITY relative to gripper_base's own frame (same as the D405
+       split above), so this is the same zero-risk move: a FIXED,
+       identity-origin child link, net world-space geometry unchanged,
+       right_gripper_base keeps its own frame (so arm_config.RIGHT_EE_LINK
+       and every existing FK caller are untouched) and is left holding just
+       the wrist mount. Before this, gripper_base's single capsule spanned
+       prop+bar+mount at once, the SAME "one capsule, several unrelated
+       parts" problem the D405 had, just not as far-flung. -->
+  <link name="right_gripper_plate">
     <inertial>
       <origin xyz="0.000182 -0.034159 -0.010603" rpy="0.000000 0.000000 0.000000" />
       <mass value="0.421580" />
@@ -241,6 +250,19 @@
         <mesh filename="aloha_assets/vx300s_7_gripper_bar.stl" />
       </geometry>
     </collision>
+  </link>
+  <joint name="right_gripper_plate_fixed" type="fixed">
+    <parent link="right_gripper_base" />
+    <child link="right_gripper_plate" />
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0" />
+  </joint>
+  <link name="right_gripper_base">
+    <inertial>
+      <origin xyz="0.000182 -0.034159 -0.010603" rpy="0.000000 0.000000 0.000000" />
+      <mass value="0.421580" />
+      <inertia ixx="0.000790482" iyy="0.000503083" izz="0.001071079" ixy="0.000004118"
+        ixz="0.000000844" iyz="-0.000141505" />
+    </inertial>
     <visual>
       <origin xyz="0.000000 -0.035250 -0.022700" rpy="-3.141593 -1.570796 0.000000" />
       <geometry>
@@ -256,6 +278,28 @@
         <mesh filename="aloha_assets/vx300s_7_gripper_wrist_mount.stl" />
       </geometry>
     </collision>
+  </link>
+  <!-- Split from right_gripper_base 2026-09-02: this link used to carry FOUR
+       concatenated collision meshes (prop, bar, wrist mount, and this D405
+       camera), so the automatic per-link capsule fit produced one capsule
+       spanning plate to camera, as long and as fat as that whole span
+       demanded. A FIXED joint (zero DOF, baked into FK exactly like any
+       other fixed joint already in this file, e.g. the *_gripper_link to
+       *_gripper_base joint just above) gives the camera its own link, its
+       own tight capsule, and lets capsule_gate.py's camera-margin
+       classification (CAMERA_LINKS) apply to it, which it never did while
+       fused into a plain gripper link. Net world-space geometry is
+       UNCHANGED: the origin that used to sit on the mesh now sits on the
+       link's own visual/collision, with an identity joint origin, the
+       same convention this file already uses for middle_camera_body and
+       middle_camera_cover. -->
+  <link name="right_gripper_camera">
+    <inertial>
+      <origin xyz="0.000182 -0.034159 -0.010603" rpy="0.000000 0.000000 0.000000" />
+      <mass value="0.421580" />
+      <inertia ixx="0.000790482" iyy="0.000503083" izz="0.001071079" ixy="0.000004118"
+        ixz="0.000000844" iyz="-0.000141505" />
+    </inertial>
     <visual>
       <origin xyz="0.000000 -0.082475 -0.009595" rpy="0.436333 0.000000 -3.141593" />
       <geometry>
@@ -272,6 +316,11 @@
       </geometry>
     </collision>
   </link>
+  <joint name="right_gripper_camera_fixed" type="fixed">
+    <parent link="right_gripper_base" />
+    <child link="right_gripper_camera" />
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0" />
+  </joint>
   <joint name="right_gripper_link_right_gripper_base_fixed" type="fixed">
     <parent link="right_gripper_link" />
     <child link="right_gripper_base" />
@@ -284,26 +333,45 @@
       <inertia ixx="0.000044678" iyy="0.000019618" izz="0.000057474" ixy="0.000000507"
         ixz="-0.000000169" iyz="0.000006876" />
     </inertial>
+    <!-- Finger carriage turned 180 deg about the plate normal (2026-09-03, Devi's observation on the rig,
+         confirmed by the touch fit's tip y). The rails sit at +y and this rail carries the OTHER
+         finger's STL; the joint below is rotated to match. Tip stays on the centreline (127.5 mm). -->
     <visual>
-      <origin xyz="0.014164 0.021173 0.060000" rpy="1.570796 1.570796 0.000000" />
+      <origin xyz="0.014164 -0.021173 0.059707" rpy="-1.570796 -1.570796 -0.000000" />
       <geometry>
-        <mesh filename="aloha_assets/vx300s_8_custom_finger_left.stl" />
+        <mesh filename="aloha_assets/vx300s_8_custom_finger_right.stl" />
       </geometry>
       <material name="black">
         <color rgba="0.15 0.15 0.15 1" />
       </material>
     </visual>
     <collision>
-      <origin xyz="0.014164 0.021173 0.060000" rpy="1.570796 1.570796 0.000000" />
+      <origin xyz="0.014164 -0.021173 0.059707" rpy="-1.570796 -1.570796 -0.000000" />
       <geometry>
-        <mesh filename="aloha_assets/vx300s_8_custom_finger_left.stl" />
+        <mesh filename="aloha_assets/vx300s_8_custom_finger_right.stl" />
       </geometry>
     </collision>
-  </link>
+      <!-- Fingertip extension, touch-calibrated 2026-09-03: the ALOHA finger STL ends 111 mm
+         from gripper_base along +z; 15 tip-to-tip touches put the real closed tip at 127.5 +/- 2 mm.
+         This box carries the last 16 mm so the viewer, the capsule gate and any mesh-built
+         collision model see the true fingertip (calibration/touch_calibrate.py). -->
+    <visual>
+      <origin xyz="0.018037 0.097304 0.025577" rpy="-0.000000 1.570796 1.570796" />
+      <geometry>
+        <box size="0.0103 0.0100 0.0164" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0.018037 0.097304 0.025577" rpy="-0.000000 1.570796 1.570796" />
+      <geometry>
+        <box size="0.0103 0.0100 0.0164" />
+      </geometry>
+    </collision>
+</link>
   <joint name="right_left_finger" type="prismatic">
     <parent link="right_gripper_base" />
     <child link="right_left_finger_link" />
-    <origin xyz="0.019100 -0.014164 0.021173" rpy="-1.570796 0.000000 1.570796" />
+    <origin xyz="0.019100 0.014164 0.021173" rpy="1.570796 0.000000 -1.570797" />
     <axis xyz="0.000000 0.000000 -1.000000" />
     <dynamics damping="40.000000" />
     <limit lower="0.000000" upper="0.041000" velocity="3.141592653589793"/>
@@ -315,26 +383,45 @@
       <inertia ixx="0.000044677" iyy="0.000019616" izz="0.000057474" ixy="-0.000000570"
         ixz="-0.000000048" iyz="-0.000006871" />
     </inertial>
+    <!-- Finger carriage turned 180 deg about the plate normal (2026-09-03, Devi's observation on the rig,
+         confirmed by the touch fit's tip y). The rails sit at +y and this rail carries the OTHER
+         finger's STL; the joint below is rotated to match. Tip stays on the centreline (127.5 mm). -->
     <visual>
-      <origin xyz="0.014164 -0.021173 0.059707" rpy="-1.570796 -1.570796 0.000000" />
+      <origin xyz="0.014164 0.021173 0.060000" rpy="1.570796 1.570796 -0.000000" />
       <geometry>
-        <mesh filename="aloha_assets/vx300s_8_custom_finger_right.stl" />
+        <mesh filename="aloha_assets/vx300s_8_custom_finger_left.stl" />
       </geometry>
       <material name="black">
         <color rgba="0.15 0.15 0.15 1" />
       </material>
     </visual>
     <collision>
-      <origin xyz="0.014164 -0.021173 0.059707" rpy="-1.570796 -1.570796 0.000000" />
+      <origin xyz="0.014164 0.021173 0.060000" rpy="1.570796 1.570796 -0.000000" />
       <geometry>
-        <mesh filename="aloha_assets/vx300s_8_custom_finger_right.stl" />
+        <mesh filename="aloha_assets/vx300s_8_custom_finger_left.stl" />
       </geometry>
     </collision>
-  </link>
+      <!-- Fingertip extension, touch-calibrated 2026-09-03: the ALOHA finger STL ends 111 mm
+         from gripper_base along +z; 15 tip-to-tip touches put the real closed tip at 127.5 +/- 2 mm.
+         This box carries the last 16 mm so the viewer, the capsule gate and any mesh-built
+         collision model see the true fingertip (calibration/touch_calibrate.py). -->
+    <visual>
+      <origin xyz="0.017890 -0.097304 0.025758" rpy="0.000000 -1.570796 1.570796" />
+      <geometry>
+        <box size="0.0102 0.0101 0.0164" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0.017890 -0.097304 0.025758" rpy="0.000000 -1.570796 1.570796" />
+      <geometry>
+        <box size="0.0102 0.0101 0.0164" />
+      </geometry>
+    </collision>
+</link>
   <joint name="right_right_finger" type="prismatic">
     <parent link="right_gripper_base" />
     <child link="right_right_finger_link" />
-    <origin xyz="-0.019100 -0.014164 0.021173" rpy="1.570796 0.000000 1.570796" />
+    <origin xyz="-0.019100 0.014164 0.021173" rpy="-1.570796 0.000000 -1.570797" />
     <axis xyz="0.000000 0.000000 -1.000000" />
     <dynamics damping="40.000000" />
     <limit lower="0.000000" upper="0.041000" velocity="3.141592653589793"/>
@@ -366,7 +453,8 @@
     <parent link="base" />
     <child link="left_base_link" />
     <!-- Symmetric with right_base_link; see measurement note there. -->
-    <origin xyz="0.520000 -0.019000 0.020000" rpy="0.000000 0.000000 3.141593" />
+        <!-- Touch-calibrated 2026-09-03 against the right arm (calibration/touch_calibrate.py, touch_20260903_201005_refk_fit.json): was xyz=(0.5200 -0.0190 0.0200) rpy=(0.0000 0.0000 3.1416); 15 touches, residual rms 15.3 mm. Datasets recorded before this used the old values. -->
+    <origin xyz="0.535278 -0.020820 0.045371" rpy="0.000000 0.000000 3.137374" />
   </joint>
   <link name="left_shoulder_link">
     <inertial>
@@ -539,7 +627,16 @@
     <dynamics damping="1.200000" />
     <limit lower="-3.141580" upper="3.141580" velocity="3.141592653589793"/>
   </joint>
-  <link name="left_gripper_base">
+  <!-- Split from left_gripper_base 2026-09-02: the prop and bar meshes sit
+       at IDENTITY relative to gripper_base's own frame (same as the D405
+       split above), so this is the same zero-risk move: a FIXED,
+       identity-origin child link, net world-space geometry unchanged,
+       left_gripper_base keeps its own frame (so arm_config.LEFT_EE_LINK
+       and every existing FK caller are untouched) and is left holding just
+       the wrist mount. Before this, gripper_base's single capsule spanned
+       prop+bar+mount at once, the SAME "one capsule, several unrelated
+       parts" problem the D405 had, just not as far-flung. -->
+  <link name="left_gripper_plate">
     <inertial>
       <origin xyz="0.000182 -0.034159 -0.010603" rpy="0.000000 0.000000 0.000000" />
       <mass value="0.421580" />
@@ -576,6 +673,19 @@
         <mesh filename="aloha_assets/vx300s_7_gripper_bar.stl" />
       </geometry>
     </collision>
+  </link>
+  <joint name="left_gripper_plate_fixed" type="fixed">
+    <parent link="left_gripper_base" />
+    <child link="left_gripper_plate" />
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0" />
+  </joint>
+  <link name="left_gripper_base">
+    <inertial>
+      <origin xyz="0.000182 -0.034159 -0.010603" rpy="0.000000 0.000000 0.000000" />
+      <mass value="0.421580" />
+      <inertia ixx="0.000790482" iyy="0.000503083" izz="0.001071079" ixy="0.000004118"
+        ixz="0.000000844" iyz="-0.000141505" />
+    </inertial>
     <visual>
       <origin xyz="0.000000 -0.035250 -0.022700" rpy="-3.141593 -1.570796 0.000000" />
       <geometry>
@@ -591,6 +701,28 @@
         <mesh filename="aloha_assets/vx300s_7_gripper_wrist_mount.stl" />
       </geometry>
     </collision>
+  </link>
+  <!-- Split from left_gripper_base 2026-09-02: this link used to carry FOUR
+       concatenated collision meshes (prop, bar, wrist mount, and this D405
+       camera), so the automatic per-link capsule fit produced one capsule
+       spanning plate to camera, as long and as fat as that whole span
+       demanded. A FIXED joint (zero DOF, baked into FK exactly like any
+       other fixed joint already in this file, e.g. the *_gripper_link to
+       *_gripper_base joint just above) gives the camera its own link, its
+       own tight capsule, and lets capsule_gate.py's camera-margin
+       classification (CAMERA_LINKS) apply to it, which it never did while
+       fused into a plain gripper link. Net world-space geometry is
+       UNCHANGED: the origin that used to sit on the mesh now sits on the
+       link's own visual/collision, with an identity joint origin, the
+       same convention this file already uses for middle_camera_body and
+       middle_camera_cover. -->
+  <link name="left_gripper_camera">
+    <inertial>
+      <origin xyz="0.000182 -0.034159 -0.010603" rpy="0.000000 0.000000 0.000000" />
+      <mass value="0.421580" />
+      <inertia ixx="0.000790482" iyy="0.000503083" izz="0.001071079" ixy="0.000004118"
+        ixz="0.000000844" iyz="-0.000141505" />
+    </inertial>
     <visual>
       <origin xyz="0.000000 -0.082475 -0.009595" rpy="0.436333 0.000000 -3.141593" />
       <geometry>
@@ -607,6 +739,11 @@
       </geometry>
     </collision>
   </link>
+  <joint name="left_gripper_camera_fixed" type="fixed">
+    <parent link="left_gripper_base" />
+    <child link="left_gripper_camera" />
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0" />
+  </joint>
   <joint name="left_gripper_link_left_gripper_base_fixed" type="fixed">
     <parent link="left_gripper_link" />
     <child link="left_gripper_base" />
@@ -619,26 +756,45 @@
       <inertia ixx="0.000044678" iyy="0.000019618" izz="0.000057474" ixy="0.000000507"
         ixz="-0.000000169" iyz="0.000006876" />
     </inertial>
+    <!-- Finger carriage turned 180 deg about the plate normal (2026-09-03, Devi's observation on the rig,
+         confirmed by the touch fit's tip y). The rails sit at +y and this rail carries the OTHER
+         finger's STL; the joint below is rotated to match. Tip stays on the centreline (127.5 mm). -->
     <visual>
-      <origin xyz="0.014164 0.021173 0.060000" rpy="1.570796 1.570796 0.000000" />
+      <origin xyz="0.014164 -0.021173 0.059707" rpy="-1.570796 -1.570796 -0.000000" />
       <geometry>
-        <mesh filename="aloha_assets/vx300s_8_custom_finger_left.stl" />
+        <mesh filename="aloha_assets/vx300s_8_custom_finger_right.stl" />
       </geometry>
       <material name="black">
         <color rgba="0.15 0.15 0.15 1" />
       </material>
     </visual>
     <collision>
-      <origin xyz="0.014164 0.021173 0.060000" rpy="1.570796 1.570796 0.000000" />
+      <origin xyz="0.014164 -0.021173 0.059707" rpy="-1.570796 -1.570796 -0.000000" />
       <geometry>
-        <mesh filename="aloha_assets/vx300s_8_custom_finger_left.stl" />
+        <mesh filename="aloha_assets/vx300s_8_custom_finger_right.stl" />
       </geometry>
     </collision>
-  </link>
+      <!-- Fingertip extension, touch-calibrated 2026-09-03: the ALOHA finger STL ends 111 mm
+         from gripper_base along +z; 15 tip-to-tip touches put the real closed tip at 127.5 +/- 2 mm.
+         This box carries the last 16 mm so the viewer, the capsule gate and any mesh-built
+         collision model see the true fingertip (calibration/touch_calibrate.py). -->
+    <visual>
+      <origin xyz="0.018037 0.097304 0.025577" rpy="-0.000000 1.570796 1.570796" />
+      <geometry>
+        <box size="0.0103 0.0100 0.0164" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0.018037 0.097304 0.025577" rpy="-0.000000 1.570796 1.570796" />
+      <geometry>
+        <box size="0.0103 0.0100 0.0164" />
+      </geometry>
+    </collision>
+</link>
   <joint name="left_left_finger" type="prismatic">
     <parent link="left_gripper_base" />
     <child link="left_left_finger_link" />
-    <origin xyz="0.019100 -0.014164 0.021173" rpy="-1.570796 0.000000 1.570796" />
+    <origin xyz="0.019100 0.014164 0.021173" rpy="1.570796 0.000000 -1.570797" />
     <axis xyz="0.000000 0.000000 -1.000000" />
     <dynamics damping="40.000000" />
     <limit lower="0.000000" upper="0.041000" velocity="3.141592653589793"/>
@@ -650,26 +806,45 @@
       <inertia ixx="0.000044677" iyy="0.000019616" izz="0.000057474" ixy="-0.000000570"
         ixz="-0.000000048" iyz="-0.000006871" />
     </inertial>
+    <!-- Finger carriage turned 180 deg about the plate normal (2026-09-03, Devi's observation on the rig,
+         confirmed by the touch fit's tip y). The rails sit at +y and this rail carries the OTHER
+         finger's STL; the joint below is rotated to match. Tip stays on the centreline (127.5 mm). -->
     <visual>
-      <origin xyz="0.014164 -0.021173 0.059707" rpy="-1.570796 -1.570796 0.000000" />
+      <origin xyz="0.014164 0.021173 0.060000" rpy="1.570796 1.570796 -0.000000" />
       <geometry>
-        <mesh filename="aloha_assets/vx300s_8_custom_finger_right.stl" />
+        <mesh filename="aloha_assets/vx300s_8_custom_finger_left.stl" />
       </geometry>
       <material name="black">
         <color rgba="0.15 0.15 0.15 1" />
       </material>
     </visual>
     <collision>
-      <origin xyz="0.014164 -0.021173 0.059707" rpy="-1.570796 -1.570796 0.000000" />
+      <origin xyz="0.014164 0.021173 0.060000" rpy="1.570796 1.570796 -0.000000" />
       <geometry>
-        <mesh filename="aloha_assets/vx300s_8_custom_finger_right.stl" />
+        <mesh filename="aloha_assets/vx300s_8_custom_finger_left.stl" />
       </geometry>
     </collision>
-  </link>
+      <!-- Fingertip extension, touch-calibrated 2026-09-03: the ALOHA finger STL ends 111 mm
+         from gripper_base along +z; 15 tip-to-tip touches put the real closed tip at 127.5 +/- 2 mm.
+         This box carries the last 16 mm so the viewer, the capsule gate and any mesh-built
+         collision model see the true fingertip (calibration/touch_calibrate.py). -->
+    <visual>
+      <origin xyz="0.017890 -0.097304 0.025758" rpy="0.000000 -1.570796 1.570796" />
+      <geometry>
+        <box size="0.0102 0.0101 0.0164" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0.017890 -0.097304 0.025758" rpy="0.000000 -1.570796 1.570796" />
+      <geometry>
+        <box size="0.0102 0.0101 0.0164" />
+      </geometry>
+    </collision>
+</link>
   <joint name="left_right_finger" type="prismatic">
     <parent link="left_gripper_base" />
     <child link="left_right_finger_link" />
-    <origin xyz="-0.019100 -0.014164 0.021173" rpy="1.570796 0.000000 1.570796" />
+    <origin xyz="-0.019100 0.014164 0.021173" rpy="-1.570796 0.000000 -1.570797" />
     <axis xyz="0.000000 0.000000 -1.000000" />
     <dynamics damping="40.000000" />
     <limit lower="0.000000" upper="0.041000" velocity="3.141592653589793"/>
@@ -731,11 +906,11 @@
     </collision>
   </link>
   <joint name="middle_shoulder" type="revolute">
-    <origin xyz="0.0 0.013999999999999999 0.04125" rpy="-0.0 -1.5707963267948966 0" />
-    <limit effort="20" lower="-1.8849555921538759" upper="1.9896753472735358" velocity="3.141592653589793"/>
+    <origin xyz="0.0 0.013999999999999999 0.04125" rpy="0.0 -1.4757963267948964 0.0" />
+    <limit effort="20" lower="-2.3046753472735357" upper="1.569955592153876" velocity="3.141592653589793"/>
     <parent link="middle_shoulder_link" />
     <child link="middle_upper_arm_link" />
-    <axis xyz="0.0 -1.0 0.0" />
+    <axis xyz="0.0 1.0 0.0" />
   </joint>
   <link name="middle_upper_arm_link">
     <inertial>
@@ -765,11 +940,11 @@
   </link>
   <joint name="middle_upper_arm" type="revolute">
     <origin xyz="0.25 0.0 -0.05"
-      rpy="2.1791458186645653e-52 -1.4349296274686127e-42 2.8698592549372254e-42" />
-    <limit effort="15" lower="-2.1467549799530254" upper="1.6057029118347832" velocity="3.141592653589793"/>
+      rpy="0.0 -0.04999999999999988 0.0" />
+    <limit effort="15" lower="-1.735702911834783" upper="2.0167549799530256" velocity="3.141592653589793"/>
     <parent link="middle_upper_arm_link" />
     <child link="middle_upper_forearm_link" />
-    <axis xyz="-2.8698592549372254e-42 -1.0 -2.1791458186645675e-52" />
+    <axis xyz="0.0 1.0 0.0" />
   </joint>
   <link name="middle_upper_forearm_link">
     <inertial>
@@ -798,11 +973,11 @@
     </collision>
   </link>
   <joint name="middle_upper_forearm" type="revolute">
-    <origin xyz="0.0 -0.013499999999999998 -0.1718" rpy="1.5707963267948966 1.5707963267948966 0" />
-    <limit effort="2" lower="-3.141582653589793" upper="3.141582653589793" velocity="3.141592653589793"/>
+    <origin xyz="0.0 -0.013499999999999998 -0.1718" rpy="1.6407963267948966 1.5707963267948966 0.0" />
+    <limit effort="2" lower="-3.211582653589793" upper="3.071582653589793" velocity="3.141592653589793"/>
     <parent link="middle_upper_forearm_link" />
     <child link="middle_lower_forearm_link" />
-    <axis xyz="1.0 -1.4349296274686127e-42 2.1791458186645653e-52" />
+    <axis xyz="1.0 0.0 0.0" />
   </joint>
   <link name="middle_lower_forearm_link">
     <inertial>
@@ -831,11 +1006,11 @@
     </collision>
   </link>
   <joint name="middle_lower_forearm" type="revolute">
-    <origin xyz="0.0782 0.0 0.019100000000000002" rpy="1.5707963267949763 -0.0 1.5707963267948966" />
-    <limit effort="5" lower="-1.7453292519943295" upper="2.1467549799530254" velocity="3.141592653589793"/>
+    <origin xyz="0.0782 0.0 0.019100000000000002" rpy="1.570796326794976 0.0 1.6607963267948964" />
+    <limit effort="5" lower="-1.6553292519943295" upper="2.2367549799530253" velocity="3.141592653589793"/>
     <parent link="middle_lower_forearm_link" />
     <child link="middle_wrist_link" />
-    <axis xyz="2.8698592549372254e-42 -1.0 7.97360475549766e-14" />
+    <axis xyz="0.0 -1.0 0.0" />
   </joint>
   <link name="middle_wrist_link">
     <inertial>
@@ -865,11 +1040,11 @@
   </link>
   <joint name="middle_wrist" type="revolute">
     <origin xyz="-1.7053025658242404e-15 -0.01899999999999482 0.06500000000000149"
-      rpy="-1.570796326794897 -1.5707963267948128 0" />
-    <limit effort="1" lower="-3.141592653589793" upper="3.141592653589793" velocity="3.141592653589793"/>
+      rpy="-3.130796326794897 -1.5707963267948128 0.0" />
+    <limit effort="1" lower="-1.581592653589793" upper="4.701592653589794" velocity="3.141592653589793"/>
     <parent link="middle_wrist_link" />
     <child link="middle_pan_link" />
-    <axis xyz="1.0 -1.4349446804892014e-42 1.6339707364920764e-13" />
+    <axis xyz="1.0 0.0 0.0" />
   </joint>
   <link name="middle_pan_link">
     <inertial>
@@ -899,11 +1074,11 @@
   </link>
   <joint name="middle_pan" type="revolute">
     <origin xyz="0.04125 0.03725000000000001 1.1379786002407855e-17"
-      rpy="-1.5707963267948963 2.5199808612277694e-29 -1.4272358353620772e-42" />
-    <limit effort="1" lower="-3.141592653589793" upper="0.915" velocity="3.141592653589793"/>
+      rpy="1.5707963267948966 -0.7565926535897937 -3.141592653589793" />
+    <limit effort="1" lower="-0.7565926535897933" upper="3.3" velocity="3.141592653589793"/>
     <parent link="middle_pan_link" />
     <child link="middle_camera" />
-    <axis xyz="0.0 -6.162975822039155e-33 1.0" />
+    <axis xyz="0.0 0.0 1.0" />
   </joint>
   <link name="middle_camera">
     <inertial>
