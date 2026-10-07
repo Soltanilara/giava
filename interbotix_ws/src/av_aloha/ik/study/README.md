@@ -26,7 +26,7 @@ harmful in every weight and combination — rejected.
 ## Try it: the interactive playground
 
 ```bash
-cd interbotix_ws/src/av_aloha/data_collection_scripts/ik_study
+cd interbotix_ws/src/av_aloha/data_collection/ik_study
 
 # GPU (pick a free device):
 CUDA_VISIBLE_DEVICES=1 XLA_PYTHON_CLIENT_PREALLOCATE=false \

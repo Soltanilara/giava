@@ -192,7 +192,7 @@ Two rules, both learned the hard way:
 
 ## 5. The GIAVA integration
 
-`data_collection_scripts/tube_mpc_hook.py` is the adapter seam.  It is shared
+`data_collection/tube_mpc_hook.py` is the adapter seam.  It is shared
 by `debug/tube_mpc_bench.py` (quantitative, one arm) and, under
 `GIAVA_TUBE_MPC=1`, by `data_collection.py` — so both run the same filter and
 the numbers transfer.

@@ -2,7 +2,7 @@
 
 Train on datasets recorded by `data_collection.py` (LeRobot v3 format, one
 run directory per session under
-`interbotix_ws/src/av_aloha/data_collection_scripts/dataset/lerobot/<task>/<timestamp>/`).
+`interbotix_ws/src/av_aloha/data_collection/dataset/lerobot/<task>/<timestamp>/`).
 
 ## Quick start
 
@@ -96,7 +96,7 @@ At inference, reproduce the collection-time conditions:
 
 ## Related tools
 
-- `../interbotix_ws/src/av_aloha/data_collection_scripts/measure_latency.py`
+- `../interbotix_ws/src/av_aloha/data_collection/measure_latency.py`
   — offline latency/sync report for any recorded run (tick jitter, camera
   sync + staleness, actuation lag, optional visual lag).
 - `<run_dir>/meta/robustness.jsonl` — per-episode quality record (overruns,

@@ -133,7 +133,7 @@ def piece_episodes(root, pieces):
     """Episode indices whose task string names one of `pieces` (shape_sorter
     runs: 'insert the red cube into the square hole' -> cube)."""
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "interbotix_ws"
-                           / "src" / "av_aloha" / "data_collection_scripts"))
+                           / "src" / "av_aloha" / "data_collection"))
     import shape_sorter as ss
     bad = [p for p in pieces if p not in ss.CLASSES]
     if bad:

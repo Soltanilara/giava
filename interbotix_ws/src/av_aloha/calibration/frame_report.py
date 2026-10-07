@@ -28,9 +28,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-## data_collection_scripts/ is a SIBLING of this package now, not the
+## data_collection/ is a SIBLING of this package now, not the
 ## parent it used to be.
-SCRIPTS_DIR = HERE.parent / "data_collection_scripts"
+SCRIPTS_DIR = HERE.parent / "data_collection"
 for _p in (str(HERE), str(SCRIPTS_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -485,23 +485,19 @@ def _q_from_robot(frames: RobotFrames, arms: List[str]):
     ensure_ros_path()
     import rospy
     from kinematics import JointFrameBridge, read_measured_q
-    from robot_control import (create_and_configure_robots,
-                               read_middle_waist_shift)
+    from robot_control import create_and_configure_robots
 
     rospy.init_node("giava_frame_report", anonymous=True, disable_signals=True)
     robots = create_and_configure_robots(tuple(arms))
     rospy.sleep(0.5)
 
-    shift = (read_middle_waist_shift(robots["middle"])
-             if "middle" in robots else 0.0)
-    bridge = JointFrameBridge(frames.robot, waist_driver_shift=shift)
+    bridge = JointFrameBridge(frames.robot)
     q_driver = read_measured_q(robots, frames, arms)
     q_urdf = bridge.to_urdf(q_driver)
     return (q_urdf,
             f"MEASURED joint state, arms={','.join(arms)} "
             f"(driver coords -> URDF)",
             {"kind": "measured", "arms": list(arms),
-             "waist_homing_offset_rad": float(shift),
              "q_driver": q_driver.tolist()})
 
 

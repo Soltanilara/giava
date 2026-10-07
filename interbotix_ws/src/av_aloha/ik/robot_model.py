@@ -45,7 +45,7 @@ from pathlib import Path as _Path
 
 def _find_urdf() -> str:
     ## Walk up for the marker instead of counting parents[N]: this file has
-    ## already moved once (data_collection_scripts/ik/study/ -> av_aloha/ik/).
+    ## already moved once (data_collection/ik/study/ -> av_aloha/ik/).
     here = _Path(__file__).resolve()
     for cand in here.parents:
         if (cand / "giava.urdf").exists():

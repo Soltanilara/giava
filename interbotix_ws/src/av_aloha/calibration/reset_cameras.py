@@ -19,9 +19,9 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-## data_collection_scripts/ is a SIBLING of this package now, not the
+## data_collection/ is a SIBLING of this package now, not the
 ## parent it used to be.
-SCRIPTS_DIR = HERE.parent / "data_collection_scripts"
+SCRIPTS_DIR = HERE.parent / "data_collection"
 for _p in (str(HERE), str(SCRIPTS_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)

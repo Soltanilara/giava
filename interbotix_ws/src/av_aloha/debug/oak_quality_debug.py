@@ -34,7 +34,7 @@ import sys
 import termios
 import tty
 
-from interbotix_ws.src.av_aloha.data_collection_scripts.headset_link import make_headset
+from interbotix_ws.src.av_aloha.data_collection.headset_link import make_headset
 from headset_control import HeadsetFullControl as HeadsetControl
 from headset_utils import HeadsetFeedback
 

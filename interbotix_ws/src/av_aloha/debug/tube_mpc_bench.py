@@ -26,7 +26,7 @@ Modes (--mode):
 run: the test the filter exists for.  Refused in baseline mode on hardware
 (it would drive the joint into its hard stop at full speed); use --sim.
 
-Usage (data_collection_scripts/, gym_av312 env, driver launched):
+Usage (data_collection/, gym_av312 env, driver launched):
   python tube_mpc_bench.py --mode tube                     # print the plan, no motion
   python tube_mpc_bench.py --mode calib --go               # gentle, for W
   python tube_mpc_bench.py --mode baseline --go

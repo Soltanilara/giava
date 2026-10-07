@@ -158,6 +158,7 @@ from dataset import (
     BackgroundEpisodeSaver,
     quiet_libav,
     create_dataset,
+    remove_run_if_empty,
     resolve_resume_run,
     build_frame,
 )
@@ -852,10 +853,9 @@ def main():
     ## so an existing recording session is unaffected.
     apply_profile_limits(robots, cfg, arm_names)
 
-    # Middle-waist driver frame = physical motor re-clock + Homing_Offset.
-    # Resolved and reported in ONE place so this and teleop.py cannot drift
-    # apart; see robot_control.resolve_middle_waist_shift for why the register
-    # is ignored under ext_position.
+    # Middle-waist driver frame = physical motor re-clock.  Resolved and
+    # reported in ONE place so this and teleop.py cannot drift apart; see
+    # robot_control.resolve_middle_waist_shift.
     waist_shift = 0.0
     if "middle" in arm_names:
         waist_shift = resolve_middle_waist_shift(robots["middle"])
@@ -1093,7 +1093,8 @@ def main():
         ## what train_real.py --resume points --config_path at).
         try:
             _tc = json.loads((Path(_policy_ckpt) / "train_config.json").read_text())
-            _policy_ds_root = _tc["dataset"]["root"]
+            from paths import checkpoint_dataset_root
+            _policy_ds_root = str(checkpoint_dataset_root(_tc["dataset"]["root"]))
         except Exception as _exc:
             print(f"[dagger] could not find the policy's training dataset "
                   f"({_exc}); waist canonicalization will be SKIPPED")
@@ -1161,6 +1162,11 @@ def main():
     ## silently cost every episode recorded in that run.  close() is
     ## idempotent, so the 'q' path still works exactly as before.
     import atexit
+    ## Registered BEFORE close so it runs AFTER it (atexit is LIFO): a run
+    ## that ends with zero saved episodes is deleted once finalize has
+    ## flushed everything.  Never for --resume, which appends to a real run.
+    if _resume_run is None:
+        atexit.register(remove_run_if_empty, dataset_root)
     atexit.register(episode_saver.close)
 
     # print(f"Dataset: {dataset}")

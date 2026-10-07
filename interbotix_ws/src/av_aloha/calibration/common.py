@@ -55,8 +55,8 @@ import numpy as np
 ## ------------------------------------------------------------------ ##
 
 HERE = Path(__file__).resolve().parent
-## data_collection_scripts/ -- where the rest of the robot stack lives.
-SCRIPTS_DIR = HERE.parent / "data_collection_scripts"
+## data_collection/ -- where the rest of the robot stack lives.
+SCRIPTS_DIR = HERE.parent / "data_collection"
 def _find_repo_root(start: Path) -> Path:
     """Walk up for giava.urdf rather than counting parents[N] -- the count was
     already wrong once, the day this package moved up a level."""
@@ -134,7 +134,7 @@ _CONDA_RUN_HINT = """
   environment instead of wrapping the command:
 
       conda activate gym_av312
-      cd /home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts
+      cd /home/devi/giava/interbotix_ws/src/av_aloha/data_collection
       python calibration/<script>.py ...
 
   For a non-interactive run, pass the flag that skips the prompt

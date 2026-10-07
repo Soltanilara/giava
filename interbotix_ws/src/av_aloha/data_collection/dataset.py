@@ -1144,6 +1144,32 @@ def build_frame(
 
     return frame
 
+def remove_run_if_empty(dataset_root):
+    """Delete a run folder that ended without a single saved episode.
+
+    Every session opens a fresh run folder at startup and writes its config
+    snapshot, intrinsics and meta into it, so a session that only teleoperated
+    (or crashed before recording) used to leave a folder of metadata with no
+    data -- 92 of them by 2026-10-07.  Call AFTER finalize.  Checks the files
+    themselves, not just meta, so a run with any episode on disk is kept.
+    """
+    import shutil
+    root = Path(dataset_root)
+    if not root.is_dir():
+        return False
+    if any(root.glob("data/**/*.parquet")) or any(root.glob("videos/**/*.mp4")):
+        return False
+    try:
+        info = json.loads((root / "meta" / "info.json").read_text())
+        if int(info.get("total_episodes") or 0) > 0:
+            return False
+    except (OSError, ValueError):
+        pass
+    shutil.rmtree(root)
+    print(f"[dataset] no episodes recorded -- removed empty run folder {root}")
+    return True
+
+
 def save_dataset_metadata(dataset_root, task_name, mode, active_cameras, control_dt):
     metadata = {
         "task": task_name,

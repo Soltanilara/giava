@@ -69,7 +69,7 @@ ik/collision_models.py   our 180-sphere model + corrected capsule fit
 ik/table_collision.py    tabletop half-space as a world-collision cost
 ```
 
-and `data_collection_scripts/study_ik.py` assembles the deployed
+and `data_collection/study_ik.py` assembles the deployed
 configuration — one **coupled** solve for all three arms per tick.  Coupled
 matters: inter-arm collision terms are meaningless if each arm is solved in
 its own problem.
@@ -231,10 +231,10 @@ complete list of your deviations:
 
 ### How it is used here
 
-- `data_collection_scripts/dataset.py` wraps `LeRobotDataset` for recording,
+- `data_collection/dataset.py` wraps `LeRobotDataset` for recording,
   and adds the async `EpisodeSaver` writer thread and `--verify`.
 - `policy_training/train_real.py` is your training wrapper.
-- `data_collection_scripts/rollout_policy.py` loads a checkpoint and drives
+- `data_collection/rollout_policy.py` loads a checkpoint and drives
   the arms.
 - `build_*_dataset.py` derive new datasets (env-state, masks, relative
   actions, ee-distance) from a recorded one.

@@ -167,38 +167,6 @@ def main() -> None:
                         disable_signals=True)
         from kinematics import JointStateListener
 
-        ## The middle waist servo carries a Homing_Offset, and the
-        ## driver->URDF bridge is WRONG without it -- the whole middle arm
-        ## draws rotated by that amount, which is exactly the "middle arm
-        ## did not load properly" failure this viewer shipped with.  Read
-        ## the register off the live driver the same way robot_control
-        ## does; a viewer must never guess a frame constant it can read.
-        waist_shift = 0.0
-        try:
-            import rospy
-            from interbotix_xs_msgs.srv import RegisterValues
-            rospy.wait_for_service("/puppet_middle/get_motor_registers",
-                                   timeout=5.0)
-            srv = rospy.ServiceProxy("/puppet_middle/get_motor_registers",
-                                     RegisterValues)
-            vals = srv("single", "waist", "Homing_Offset", 0).values
-            if vals:
-                ## Ticks, 4096 per 2*pi -- and the register is a SIGNED
-                ## 32-bit value delivered unsigned, so a negative offset
-                ## arrives as ~4.29e9 and must be wrapped. Same handling
-                ## as robot_control.read_middle_waist_shift, verbatim.
-                ticks = int(vals[0])
-                if ticks >= (1 << 31):
-                    ticks -= 1 << 32
-                waist_shift = ticks * 2.0 * np.pi / 4096.0
-            print(f"  middle waist Homing_Offset: {waist_shift:+.4f} rad")
-        except Exception as e:  # noqa: BLE001
-            print(f"  could not read middle Homing_Offset ({e}) -- the "
-                  f"middle arm may draw rotated at the waist")
-        ## Rebuild the bridge with the measured shift.
-        from kinematics import JointFrameBridge as _JFB
-        bridge = _JFB(frames.robot, waist_driver_shift=waist_shift)
-
         if frames is None or bridge is None:
             raise SystemExit(
                 "--from-robot needs the kinematics bridge, which failed to "

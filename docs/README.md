@@ -17,7 +17,7 @@ Also in-tree, and still the primary sources:
 - `LESSONS.md` — April–September narrative, written from measurements.
 - `tube_mpc/MATH.md` — the full derivation and proof sketch.
 - `ik/study/{BASELINE,RESULTS_FINAL,COLLISION_STUDY,TRAJECTORIES}.md` — the raw studies.
-- `data_collection_scripts/{FRAMES,TELEOP_MATH,HEADSET,SHAPE_SORTER}.md`.
+- `data_collection/{FRAMES,TELEOP_MATH,HEADSET,SHAPE_SORTER}.md`.
 - `reconstruction/README.md`, `calibration/README.md`, `rgbd/README.md`.
 
 ## The system in one picture

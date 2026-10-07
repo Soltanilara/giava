@@ -48,7 +48,7 @@ pip install numpy pyarrow opencv-python av
 From the repo root:
 
 ```bash
-cd /home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts
+cd /home/devi/giava/interbotix_ws/src/av_aloha/data_collection
 ```
 
 Example:

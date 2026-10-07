@@ -858,25 +858,14 @@ def safe_move_arm_joints(bot, target_q, total_time=3.0, step_time=0.25, accel_ra
     for q_cmd in waypoints:
         bot.arm.set_joint_positions(q_cmd.tolist(), moving_time=move_t, accel_time=accel_t, blocking=True)
 
-# Middle-waist frame shift, in radians, mirroring the servo's Homing_Offset
-# register (reported = actual + offset).  The pose tables in arm_config.py
-# store LEGACY driver values recorded with offset 0; when a Homing_Offset has
-# been written (set_waist_homing_offset.py), every commanded waist value must
-# shift by the same amount.  data_collection reads the register at startup and
-# calls set_middle_waist_shift(); 0.0 keeps historical behavior exactly.
 ## THE MIDDLE WAIST'S DRIVER FRAME.
 ##
-## Two different things can shift it, and they are NOT interchangeable:
+## The motor was physically re-clocked (bolted to the arm at a different
+## angle).  That is invisible to every register -- nothing on the bus can
+## report it -- so it has to be configured here.  (The Homing_Offset register
+## is not used: it is inert in ext_position mode and capped at +/-90 deg.)
 ##
-##   Homing_Offset      a REGISTER offset (reported = actual + offset).  Inert
-##                      while the joint runs in ext_position mode, and capped
-##                      at +/-1024 ticks (+/-90 deg) in position mode.
-##   physical re-clock  the motor bolted to the arm at a different angle.
-##                      Unlimited, works in any operating mode, and invisible
-##                      to every register -- nothing on the bus can report it,
-##                      so it has to be configured here.
-##
-## Both land in the same place: `theta` such that
+## The re-clock is `theta` such that
 ##     driver_new = driver_old + theta
 ## which `get_pose` adds to every middle pose and `study_ik` / `kinematics`
 ## turn into  waist_urdf_offset = pi - theta.
@@ -915,9 +904,7 @@ MIDDLE_WAIST_RECLOCK_RAD = -math.pi
 ## (commanded -3.1140 at an arm sitting at -0.023).
 ##
 ## A physical re-clock is a static property of the hardware, not something a
-## session discovers, so it applies unconditionally.  The REGISTER half
-## (Homing_Offset) still needs a live read, and resolve_middle_waist_shift()
-## overwrites this with reclock+register when a driver is up.
+## session discovers, so it applies unconditionally.
 ##
 ## This is the same lesson as the middle_joint_offsets.json fold: a correction
 ## that every caller must remember to apply is a correction that some caller
@@ -929,11 +916,6 @@ def set_middle_waist_shift(shift_rad):
     global MIDDLE_WAIST_DRIVER_SHIFT
     MIDDLE_WAIST_DRIVER_SHIFT = float(shift_rad)
     if abs(MIDDLE_WAIST_DRIVER_SHIFT) > 1e-9:
-        ## NOT "Homing_Offset shift", which is what this used to say: since
-        ## the 2026-09-11 re-clock the dominant term is physical and the
-        ## register is 0, so naming the register sends the next reader to look
-        ## at something that will tell them nothing.  resolve_middle_waist_shift
-        ## prints the breakdown; this only confirms it was applied.
         print(f"[frame] middle waist driver-frame shift "
               f"{MIDDLE_WAIST_DRIVER_SHIFT:+.3f} rad applied -- pose tables "
               "and URDF offset adjusted to match")
@@ -952,44 +934,16 @@ def middle_waist_reclock():
 
 
 def resolve_middle_waist_shift(bot):
-    """Total driver-frame shift for the middle waist, and report it.
+    """Driver-frame shift for the middle waist (the physical re-clock), and
+    report it.
 
     Single source of truth for a decision data_collection.py and teleop.py
-    used to make with identical copy-pasted blocks.  Combines the physical
-    re-clock (which no register can report) with Homing_Offset (which only
-    counts when the servo actually applies it), and calls
+    used to make with identical copy-pasted blocks.  Calls
     set_middle_waist_shift so the pose tables follow.
-
-    THE REGISTER IS IGNORED IN ext_position MODE.  That is a measurement, not
-    a guess: the servo does not apply Homing_Offset there, so honouring a
-    nonzero value would desynchronize the pose tables from the frame the arm
-    is really in.  Refusing to guess is the point -- a silently wrong waist
-    frame is how the camera arm ends up pointing somewhere else entirely.
     """
-    reclock = middle_waist_reclock()
-    register = read_middle_waist_shift(bot)
-
-    mode = None
-    try:
-        resp = bot.dxl.robot_get_motor_registers("single", "waist", "Operating_Mode")
-        mode = int(resp.values[0]) if resp.values else None
-    except Exception:
-        pass
-    ext = (mode == 4)
-
-    if abs(register) > 1e-6 and ext:
-        print("=" * 60)
-        print(f"[frame] waist Homing_Offset is {register:+.3f} rad but the waist")
-        print("        runs in ext_position mode, which ignores it. Treating it")
-        print("        as 0. Revert the register so the two agree:")
-        print("            python set_waist_homing_offset.py --degrees 0")
-        print("=" * 60)
-        register = 0.0
-
-    shift = reclock + register
-    print(f"[frame] middle waist: re-clock {reclock:+.4f} rad + register "
-          f"{register:+.4f} rad = shift {shift:+.4f} rad")
-    if abs(reclock) < 1e-9:
+    shift = middle_waist_reclock()
+    print(f"[frame] middle waist: re-clock shift {shift:+.4f} rad")
+    if abs(shift) < 1e-9:
         print("        (no physical re-clock configured -- pose tables used as "
               "written. If the motor HAS been re-clocked, set "
               "MIDDLE_WAIST_RECLOCK_RAD or GIAVA_MIDDLE_WAIST_RECLOCK.)")
@@ -1007,19 +961,6 @@ def resolve_middle_waist_shift(bot):
 
     set_middle_waist_shift(shift)
     return shift
-
-
-def read_middle_waist_shift(bot):
-    """Read the waist Homing_Offset from the servo, in radians (0.0 if unset)."""
-    try:
-        resp = bot.dxl.robot_get_motor_registers("single", "waist", "Homing_Offset")
-        ticks = int(resp.values[0]) if resp.values else 0
-        if ticks >= (1 << 31):
-            ticks -= 1 << 32
-        return ticks * 2.0 * np.pi / 4096.0
-    except Exception as exc:
-        print(f"[frame] could not read waist Homing_Offset ({exc}); assuming 0")
-        return 0.0
 
 
 # Return a named pose for an arm; raises ValueError if not defined.

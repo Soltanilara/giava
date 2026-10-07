@@ -49,7 +49,7 @@ REPO_ROOT = _find_root()
 
 URDF_PATH = REPO_ROOT / _MARKER
 ## ONE assets location for the whole repo (moved out of
-## data_collection_scripts/ on 2026-09-16).  `aloha_assets` at the repo
+## data_collection/ on 2026-09-16).  `aloha_assets` at the repo
 ## root is a symlink to ASSETS_DIR/meshes, which is how giava.urdf's
 ## `filename="aloha_assets/*.stl"` resolves -- do not delete it.
 ASSETS_DIR = REPO_ROOT / "assets"
@@ -61,6 +61,22 @@ PYROKI_EXAMPLES = REPO_ROOT / "pyroki" / "examples"
 ## entry points so `interbotix_xs_modules` imports without sourcing setup.bash.
 ROS_DEVEL_SITE = (REPO_ROOT / "interbotix_ws" / "devel" / "lib" / "python3"
                   / "dist-packages")
+
+
+def checkpoint_dataset_root(raw) -> Path:
+    """A dataset root as recorded in a checkpoint's train_config.json.
+
+    This folder was renamed data_collection_scripts/ -> data_collection/ on
+    2026-10-07, and every checkpoint trained before then records the old
+    path.  Fall back to the renamed one so those checkpoints still find their
+    fps, start pose and waist branch."""
+    p = Path(raw)
+    if not p.exists():
+        renamed = Path(str(p).replace("/data_collection_scripts/",
+                                      "/data_collection/"))
+        if renamed.exists():
+            return renamed
+    return p
 
 
 def describe() -> str:

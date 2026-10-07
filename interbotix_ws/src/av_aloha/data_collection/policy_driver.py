@@ -37,6 +37,19 @@ class PolicyDriver:
         ## IMPORT ORDER IS LOAD-BEARING: lerobot.policies.factory MUST be
         ## imported before lerobot.configs or this build segfaults before
         ## either name is bound (see rollout_policy.load_policy).
+        ## Custom policy types (auxiliary-head ACT variants) register their
+        ## config and patch factory.get_policy_class on import, so this must
+        ## run BEFORE the factory import below binds the name.
+        import sys as _sys
+        from pathlib import Path as _P
+        _pt = str(_P(__file__).resolve().parents[4] / 'policy_training')
+        if _pt not in _sys.path:
+            _sys.path.insert(0, _pt)
+        try:
+            import act_objhead  # noqa: F401
+            import act_sorterhead  # noqa: F401
+        except ImportError as _exc:
+            print(f'[policy_driver] custom policy types unavailable ({_exc})')
         from lerobot.policies.factory import (get_policy_class,
                                               make_pre_post_processors)
         from lerobot.configs.policies import PreTrainedConfig

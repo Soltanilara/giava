@@ -4,11 +4,11 @@ WHY THIS EXISTS
 ===============
 The tools in this folder are run directly (`python3 <folder>/<tool>.py`), so
 Python puts only *this* folder on `sys.path`.  Anything they import from
-`data_collection_scripts/` -- arm_config, robot_control, camera_manager, and
+`data_collection/` -- arm_config, robot_control, camera_manager, and
 friends -- is invisible without help.  Importing this module first supplies it.
 
 Finding the repo root: walk up looking for `giava.urdf`, the same marker
-`data_collection_scripts/paths.py` uses.  Not `parents[N]` -- counting
+`data_collection/paths.py` uses.  Not `parents[N]` -- counting
 directories silently breaks the day a file moves one level, which is exactly
 what happened to the copies of that idiom this tree used to carry.
 
@@ -49,7 +49,7 @@ def find_repo_root() -> Path:
 
 REPO_ROOT = find_repo_root()
 AV_ALOHA = REPO_ROOT / "interbotix_ws" / "src" / "av_aloha"
-SCRIPTS_DIR = AV_ALOHA / "data_collection_scripts"
+SCRIPTS_DIR = AV_ALOHA / "data_collection"
 IK_DIR = AV_ALOHA / "ik"
 
 ## Order matters only in that this folder (already first, put there by Python)

@@ -24,7 +24,7 @@ robot, no cameras, just a recorded run directory:
                       tick-aligned frames: end-to-end command -> photons ->
                       recorded-frame delay, as the policy will see it.
 
-Usage (from data_collection_scripts/, in the gym_av312 env):
+Usage (from data_collection/, in the gym_av312 env):
 
   python measure_latency.py --root dataset/lerobot/<task>/<run>            # newest episode
   python measure_latency.py --root dataset/lerobot/<task>/<run> --episode 3

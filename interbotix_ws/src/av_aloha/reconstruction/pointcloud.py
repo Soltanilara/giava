@@ -121,7 +121,7 @@ import numpy as np
 
 _HERE = Path(__file__).resolve().parent
 _CALIB = _HERE.parent / "calibration"
-_DCS = _HERE.parent / "data_collection_scripts"
+_DCS = _HERE.parent / "data_collection"
 for _p in (str(_HERE), str(_CALIB), str(_DCS), str(_HERE.parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)

@@ -301,11 +301,9 @@ class CoupledStudyIK:
         """`waist_driver_shift`: the middle waist's total driver-frame shift
         in radians, i.e. driver_new = driver_old + shift.
 
-        TWO THINGS FEED IT and they are not interchangeable: a physical
-        re-clock of the motor (unlimited, invisible to every register, and
-        since 2026-09-11 equal to -pi here) and Homing_Offset (a register,
-        inert under ext_position).  robot_control.resolve_middle_waist_shift
-        combines them; pass its result.
+        It is the physical re-clock of the motor (invisible to every
+        register; since 2026-09-11 equal to -pi here).  Pass the result of
+        robot_control.resolve_middle_waist_shift.
 
         The legacy relation was urdf = driver + pi at shift 0; with a shift h
         it becomes urdf = driver + (pi - h).  At h = -pi that offset is 2*pi
@@ -496,7 +494,7 @@ def build_study_ik(robot, control_dt: float = STUDY_DT,
     different IK solvers in this directory, all of them called from teleop
     loops, none of them agreeing.  Every weight the study validated lives in
     the module constants above; the only things a caller legitimately knows are
-    its control period and the middle waist's Homing_Offset, so those are the
+    its control period and the middle waist's re-clock shift, so those are the
     only things this takes.
 
     ALWAYS ALL THREE ARMS, whatever mode the caller runs.  The self-collision

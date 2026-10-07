@@ -4,7 +4,7 @@ import _giava_paths  # noqa: F401  (puts the shared giava trees on sys.path)
 
 import sys, json, time
 from pathlib import Path
-sys.path.insert(0, "/home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts")
+sys.path.insert(0, "/home/devi/giava/interbotix_ws/src/av_aloha/data_collection")
 sys.path.insert(0, "/opt/ros/noetic/lib/python3/dist-packages")
 import numpy as np, torch
 from lerobot.datasets import LeRobotDataset

@@ -50,9 +50,9 @@ from typing import Any, Dict, List
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-## data_collection_scripts/ is a SIBLING of this package now, not the
+## data_collection/ is a SIBLING of this package now, not the
 ## parent it used to be.
-SCRIPTS_DIR = HERE.parent / "data_collection_scripts"
+SCRIPTS_DIR = HERE.parent / "data_collection"
 for _p in (str(HERE), str(SCRIPTS_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -162,8 +162,7 @@ class MotionSession:
     def _connect(self) -> None:
         ensure_ros_path()
         import rospy
-        from robot_control import (create_and_configure_robots,
-                                   read_middle_waist_shift)
+        from robot_control import create_and_configure_robots
 
         ## disable_signals=True keeps rospy from installing its own SIGINT
         ## handler, so ours is the one that runs and the arms get halted
@@ -181,8 +180,6 @@ class MotionSession:
             ESTOP.register(name, bot)
         ESTOP.install_signal_handlers()
         print(f"  {ESTOP.describe()}")
-        if self.arm == "middle":
-            self.waist_shift = read_middle_waist_shift(self.robots["middle"])
 
     # -------------------------------------------------------------- #
     def read_q_driver(self) -> np.ndarray:

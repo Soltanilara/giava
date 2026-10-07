@@ -24,8 +24,7 @@ WHY IT GUARDS THE CURRENT
     matches servo_health.py's own constant.
 
     Torque comes back on ONLY after Goal_Position is seated at the present
-    reading.  Skipping that is what makes the arm swing when torque returns
-    (see set_waist_homing_offset.py).
+    reading.  Skipping that is what makes the arm swing when torque returns.
 """
 
 from __future__ import annotations

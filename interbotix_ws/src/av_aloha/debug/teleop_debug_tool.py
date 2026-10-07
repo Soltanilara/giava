@@ -256,24 +256,6 @@ def main() -> None:
             # reported by name instead of failing silently -- in sim, joints
             # boot at driver 0.0, which for the multiturn middle waist displays
             # as a 180 deg rotation until this reset runs.
-            # The real middle arm may still carry a Homing_Offset in the waist
-            # servo (sim never does).  A nonzero register shifts every reported
-            # waist angle, so FK/anchoring computes a wrong EE pose on the real
-            # arm while sim behaves perfectly -- exactly a "sim great, real
-            # wrong" split.  Refuse to let that pass silently.
-            if "middle" in args.arms:
-                try:
-                    from robot_control import read_middle_waist_shift
-                    _shift = read_middle_waist_shift(robots["middle"])
-                    if abs(_shift) > 1e-6:
-                        print("=" * 60)
-                        print(f"!! middle waist Homing_Offset = {_shift:+.3f} rad")
-                        print("!! this shifts all reported waist angles; the sim")
-                        print("!! has no such offset. Revert before comparing:")
-                        print("!!     python set_waist_homing_offset.py --degrees 0")
-                        print("=" * 60)
-                except Exception:
-                    pass
             for a in args.arms:
                 try:
                     print(f"[reset] {a} -> forward pose...")

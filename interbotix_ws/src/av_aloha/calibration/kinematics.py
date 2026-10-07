@@ -32,7 +32,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-SCRIPTS_DIR = HERE.parent / "data_collection_scripts"
+SCRIPTS_DIR = HERE.parent / "data_collection"
 ## The robot stack is a flat directory of modules, imported by bare name
 ## (arm_config, robot_control, study_ik...).  Put it on the path so this
 ## package can be run either as `python -m calibration.x` or directly.
@@ -243,7 +243,7 @@ class JointFrameBridge:
         out = [
             f"waist (middle_base): urdf = driver + {self.waist_urdf_offset:+.6f} rad"
             f"   (pi - driver shift {self.waist_driver_shift:+.6f};"
-            f" physical re-clock + Homing_Offset)",
+            f" physical re-clock)",
         ]
         if not self.loaded_offsets:
             out.append("per-joint assembly offsets: NONE loaded "

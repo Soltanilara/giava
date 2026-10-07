@@ -559,10 +559,8 @@ def main():
     ## Read-only; with GIAVA_PROFILE_MODE unset it reports and changes nothing.
     apply_profile_limits(robots, cfg, arm_names)
 
-    ## Middle-waist frame, same handling and same refusal-to-guess as
-    ## data_collection.py: in ext_position mode the servo ignores
-    ## Homing_Offset, so a nonzero register would desynchronize the pose
-    ## tables from the servo's actual frame.
+    ## Middle-waist frame (the physical re-clock), same handling as
+    ## data_collection.py.
     waist_shift = 0.0
     if "middle" in arm_names:
         waist_shift = resolve_middle_waist_shift(robots["middle"])

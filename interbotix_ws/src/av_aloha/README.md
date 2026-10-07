@@ -1,6 +1,6 @@
 # av_aloha — directory map
 
-Reorganised 2026-09-12.  `data_collection_scripts/` had grown to ~215 Python
+Reorganised 2026-09-12.  `data_collection/` had grown to ~215 Python
 files, of which 40 were actually reachable from the things we run every day.
 The other 175 were research phases, one-off probes, migrations that had already
 been applied, and sim-era code from April–July.  They are still here — nothing
@@ -8,7 +8,7 @@ was deleted — but they are no longer in the way.
 
 ```
 av_aloha/
-  data_collection_scripts/   the runtime: teleop, recording, replay, rollouts
+  data_collection/   the runtime: teleop, recording, replay, rollouts
   ik/                        the IK solver, and the study that produced it
   calibration/               camera/robot calibration pipeline (PHASE 1-8)
   reconstruction/            stage two: pixels to metres
@@ -36,13 +36,13 @@ Generated run data sits with whatever produces it, and is gitignored:
 | --- | --- | --- |
 | `calibration/data/oak_calib/` | `teleop.py --cameras oak` | OAK stereo checkerboard captures |
 | `debug/bench_logs/` | `debug/tube_mpc_bench.py` | every bench run |
-| `data_collection_scripts/fault_logs/` | `servo_health.py` (`FaultRecorder`) | on a watchdog trip — 20 s pre-fault buffer |
-| `data_collection_scripts/rollouts/snapshots_<tag>/` | `rollout_policy.py` | **every run by default**; `--no-snapshots` turns it off |
-| `data_collection_scripts/trajectories/logs/` | `data_collection.py` when `TRACK_LOG` | teleop tracking logs |
+| `data_collection/fault_logs/` | `servo_health.py` (`FaultRecorder`) | on a watchdog trip — 20 s pre-fault buffer |
+| `data_collection/rollouts/snapshots_<tag>/` | `rollout_policy.py` | **every run by default**; `--no-snapshots` turns it off |
+| `data_collection/trajectories/logs/` | `data_collection.py` when `TRACK_LOG` | teleop tracking logs |
 
 ## What "in use" means
 
-`data_collection_scripts/` now holds exactly the transitive closure of the
+`data_collection/` now holds exactly the transitive closure of the
 entry points we actually run:
 
 | entry point | what it is |
@@ -64,7 +64,7 @@ session, it belongs in `debug/` or `analysis/`.
 
 ## ik/
 
-`ik/` is the solver.  `data_collection_scripts/study_ik.py` imports five
+`ik/` is the solver.  `data_collection/study_ik.py` imports five
 modules from it at runtime — `robot_model`, `baseline`, `variants`,
 `collision_models`, `table_collision` — so **`ik/` is a hard dependency of data
 collection**, not research code.  Treat those five as production.
@@ -78,7 +78,7 @@ performance benchmark and is self-contained.
 
 ## Imports across directory boundaries
 
-The tools outside `data_collection_scripts/` are run directly
+The tools outside `data_collection/` are run directly
 (`python3 debug/move_arms.py`), so Python puts only their own folder on
 `sys.path`.  Anything they import from the runtime — `arm_config`,
 `robot_control`, `camera_manager` — needs help.  Each folder carries a
@@ -91,7 +91,7 @@ import arm_config
 ```
 
 It finds the repo by walking up for `giava.urdf`, the same marker
-`data_collection_scripts/paths.py` uses, and honours `GIAVA_ROOT`.  It does not
+`data_collection/paths.py` uses, and honours `GIAVA_ROOT`.  It does not
 count `parents[N]` — that idiom was in this tree at two different depths and
 both were wrong the moment a directory moved.  Please don't reintroduce it.
 

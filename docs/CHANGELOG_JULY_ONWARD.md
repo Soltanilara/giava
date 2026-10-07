@@ -155,7 +155,7 @@ the amplitude of the signal.  `Homing_Offset` is inert in `ext_position` mode
 and capped at ±90° anyway, so **the software knob existed and could not do the
 job**; the motor was physically re-clocked.  Rest is now 175° from the seam.
 
-**`da9bf2b` "Reorg: split data_collection_scripts into sibling trees"** —
+**`da9bf2b` "Reorg: split data_collection into sibling trees"** —
 215 Python files, of which 40 were reachable from anything run daily.  The
 other 175 were research phases, one-off probes, applied migrations and sim-era
 code.  Split into `ik/`, `calibration/`, `reconstruction/`, `rgbd/`, `debug/`,
@@ -303,7 +303,7 @@ this disk.
 | `build_envstate_dataset.py`, `scene_features.py`, `dataset.py`, `collision_modes.py` | smaller edits |
 | `vx300s.yaml`, `vx300s.urdf.xacro`, `wx250s_7dof.urdf{,.xacro}` | driver/URDF config |
 | `policy_training/train_real.py` | +28 |
-| **untracked** | `auto_reset.py`, `build_{eedist,mask,relative_action}_dataset.py`, `eedist_features.py`, `wrist_features.py`, and the whole `data_collection_scripts/analysis/` tree (VLM annotation, grasp scoring, px→EE fit, placement reports) |
+| **untracked** | `auto_reset.py`, `build_{eedist,mask,relative_action}_dataset.py`, `eedist_features.py`, `wrist_features.py`, and the whole `data_collection/analysis/` tree (VLM annotation, grasp scoring, px→EE fit, placement reports) |
 
 The `analysis/` tree in particular is the labelling work from 2026-09-19/20 and
 has never been committed.

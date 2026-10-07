@@ -20,7 +20,7 @@
 set -u
 cd "$(dirname "$0")" || exit 1
 PY=/home/devi/miniconda3/envs/gym_av312/bin/python
-DC=/home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts
+DC=/home/devi/giava/interbotix_ws/src/av_aloha/data_collection
 
 step_of () {   # last checkpointed step, or 0
   "$PY" -c "import json,sys

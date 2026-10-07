@@ -11,7 +11,7 @@ checks replay's layout routes every sentinel back to the arm it came from.
 import _giava_paths  # noqa: F401  (puts the shared giava trees on sys.path)
 
 import sys, types
-sys.path.insert(0, "/home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts")
+sys.path.insert(0, "/home/devi/giava/interbotix_ws/src/av_aloha/data_collection")
 sys.path.insert(0, "/opt/ros/noetic/lib/python3/dist-packages")
 import numpy as np
 import replay_episode as R

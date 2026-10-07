@@ -225,13 +225,13 @@ data/archive/
 
 ## Reorganised 2026-09-12: heavy generated trees + editor/OS droppings.
 .DS_Store
-interbotix_ws/src/av_aloha/data_collection_scripts/rollouts/
+interbotix_ws/src/av_aloha/data_collection/rollouts/
 interbotix_ws/src/av_aloha/rgbd/outputs/
 
 ## Generated run data (2026-09-16): big, regenerable, not source.
 interbotix_ws/src/av_aloha/calibration/data/oak_calib/
 interbotix_ws/src/av_aloha/debug/bench_logs/
-interbotix_ws/src/av_aloha/data_collection_scripts/fault_logs/
-interbotix_ws/src/av_aloha/data_collection_scripts/trajectories/
-interbotix_ws/src/av_aloha/data_collection_scripts/timing_logs/
-interbotix_ws/src/av_aloha/data_collection_scripts/ros_ik_trajectory_logs/
+interbotix_ws/src/av_aloha/data_collection/fault_logs/
+interbotix_ws/src/av_aloha/data_collection/trajectories/
+interbotix_ws/src/av_aloha/data_collection/timing_logs/
+interbotix_ws/src/av_aloha/data_collection/ros_ik_trajectory_logs/

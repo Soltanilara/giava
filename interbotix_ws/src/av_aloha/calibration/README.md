@@ -24,7 +24,7 @@ pyroki and jax together. **Activate it, don't use `conda run`:**
 
 ```bash
 conda activate gym_av312
-cd /home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts
+cd /home/devi/giava/interbotix_ws/src/av_aloha/data_collection
 python calibration/<script>.py --help
 ```
 

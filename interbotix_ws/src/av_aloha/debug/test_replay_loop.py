@@ -15,7 +15,7 @@ single-arm cases below run against actual recorded data.
 import _giava_paths  # noqa: F401  (puts the shared giava trees on sys.path)
 
 import sys, time, types
-sys.path.insert(0, "/home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts")
+sys.path.insert(0, "/home/devi/giava/interbotix_ws/src/av_aloha/data_collection")
 sys.path.insert(0, "/opt/ros/noetic/lib/python3/dist-packages")
 import numpy as np
 import replay_episode as R
@@ -81,14 +81,14 @@ check("7 joints starting at 0", np.allclose(sent["middle"][0], [0,1,2,3,4,5,6], 
 check("no gripper call at all", grips == {}, str(grips))
 
 print("\n=== bimanual (real recorded data) ===")
-sent, grips, resets, dt = run("/home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts/"
+sent, grips, resets, dt = run("/home/devi/giava/interbotix_ws/src/av_aloha/data_collection/"
                               "dataset/lerobot/bimanual_data_collection/20260722_164356")
 check("left + right only", sorted(sent) == ["left", "right"], str(sorted(sent)))
 check("6 joints each", all(len(c[0]) == 6 for c in sent.values()))
 check("both grippers commanded", sorted(grips) == ["left", "right"], str(sorted(grips)))
 
 print("\n=== legacy single-arm (real recorded data, timestamps.robot) ===")
-sent, grips, resets, dt = run("/home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts/"
+sent, grips, resets, dt = run("/home/devi/giava/interbotix_ws/src/av_aloha/data_collection/"
                               "dataset/lerobot/block_square/20260528_131838")
 check("right only", sorted(sent) == ["right"], str(sorted(sent)))
 check("6 joints", len(sent["right"][0]) == 6)

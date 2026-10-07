@@ -174,6 +174,7 @@ def load_policy(ckpt_dir, device, temporal_ensemble=None):
         sys.path.insert(0, str(PATHS_POLICY_TRAINING))
     try:
         import act_objhead  # noqa: F401
+        import act_sorterhead  # noqa: F401
     except ImportError as _exc:
         ## Only a problem for a checkpoint that USES a custom type; say so
         ## rather than failing later inside draccus with an opaque message.
@@ -849,7 +850,7 @@ class RolloutVideo:
                                 print(f"[video] H.264 unavailable in this "
                                       f"OpenCV build -- falling back to {_tag}. "
                                       f"{self.path.name} will need VLC/mpv, or "
-                                      f"re-encode: ffmpeg -i IN -c:v libx264 OUT")
+                                      f"re-encode: bash analysis/reencode_rollouts.sh")
                             break
                         self._writer.release()
                         self._writer = None
@@ -1455,7 +1456,8 @@ def main():
     else:
         try:
             tcfg = json.loads((ckpt_dir / "train_config.json").read_text())
-            ds_root = Path(tcfg["dataset"]["root"])
+            from paths import checkpoint_dataset_root
+            ds_root = checkpoint_dataset_root(tcfg["dataset"]["root"])
             print(f"[cfg] training dataset (from the checkpoint): {ds_root}")
             if not ds_root.exists():
                 print("[cfg] ...which no longer exists; "

@@ -16,7 +16,7 @@ the command that would produce it.
 
 ```bash
 conda activate gym_av312
-cd /home/devi/giava/interbotix_ws/src/av_aloha/data_collection_scripts
+cd /home/devi/giava/interbotix_ws/src/av_aloha/data_collection
 python reconstruction/selftest.py          # 33 checks, no hardware
 ```
 

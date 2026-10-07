@@ -4,7 +4,7 @@ The reorg of 2026-09-12 (`da9bf2b`) split one 215-file directory into sibling
 trees.  The rule it used is worth stating, because it is the rule that keeps
 the tree honest:
 
-> `data_collection_scripts/` holds **exactly the transitive closure of the
+> `data_collection/` holds **exactly the transitive closure of the
 > entry points we actually run.**  If nothing imports a file and you don't
 > reach for it every session, it belongs in `debug/` or `analysis/`.
 
@@ -13,7 +13,7 @@ it lives with the runtime.
 
 ```
 av_aloha/
-  data_collection_scripts/   the runtime — teleop, recording, replay, rollout
+  data_collection/   the runtime — teleop, recording, replay, rollout
   ik/                        the solver + the study that chose it
   calibration/               camera/robot calibration (writes JSON)
   reconstruction/            pixels → metres (consumes that JSON)
@@ -30,7 +30,7 @@ section describing `archive/` is stale and should be deleted.
 
 ## The five entry points
 
-Everything else in `data_collection_scripts/` is imported by one of these.
+Everything else in `data_collection/` is imported by one of these.
 
 | command | what it does |
 |---|---|
@@ -237,7 +237,7 @@ There are **two** analysis directories and they are not the same thing:
 | | contents | status |
 |---|---|---|
 | `av_aloha/analysis/` | `ab_report`, `analyze_replays`, `audit_idle_frames`, `manifest_training_runs`, `measure_latency`, `placement_map`, `relabel_episode(s)`, `review_rollouts`, `summarize_rollouts`, `true_fps` | committed (`e30bf4e`) |
-| `data_collection_scripts/analysis/` | `vlm_annotate.py`, `vlm_annotate_demos.py`, `score_grasp.py`, `fit_px2ee.py`, `placement_report.py`, `episode_features.py`, `split_cameras.py`, `reencode_rollouts.sh` | **untracked**, written 2026-09-19/20 |
+| `data_collection/analysis/` | `vlm_annotate.py`, `vlm_annotate_demos.py`, `score_grasp.py`, `fit_px2ee.py`, `placement_report.py`, `episode_features.py`, `split_cameras.py`, `reencode_rollouts.sh` | **untracked**, written 2026-09-19/20 |
 
 The second one is the newer labelling/scoring work.  It should move into
 `av_aloha/analysis/` under the reorg's own rule, or the rule should be
@@ -260,7 +260,7 @@ imported by an entry point.
 | `debug/make_synth.py` | synthetic-data generation | one-off |
 | `analysis/vlm_annotate*.py` | VLM-based episode annotation | active, uncommitted |
 | `gaze_av_aloha/`, `pretrain/` | the gaze / foveated-ViT line (Jinyu, Ian) | separate research programme, not yours; `pretrain/` is MAE pretraining for it and nothing imports it |
-| `block_square/` (repo root) | a 1-episode / 65-frame HF dataset clone with its own `.git`, remote `huggingface.co/datasets/deviamar/block_square` | stray clone, untracked. The *real* block_square data is under `data_collection_scripts/old_dataset/` |
+| `block_square/` (repo root) | a 1-episode / 65-frame HF dataset clone with its own `.git`, remote `huggingface.co/datasets/deviamar/block_square` | stray clone, untracked. The *real* block_square data is under `data_collection/old_dataset/` |
 | `pyroki_ik_script.py` (repo root, 58 KB) | the original single-file IK exploration | superseded by `ik/`; still referenced by `tube_mpc/{README,MATH}.md` as the source of the GJK/sphere pipeline for Phase 2 |
 | `curobo/` | read for collision/speed ideas | never deployed; the VOXEL sphere fit was borrowed and reimplemented |
 
@@ -292,7 +292,7 @@ work.  Label them, don't delete them.
 Two idioms were removed across 24 files because they had never executed:
 
 - **`if __package__: from .x import y` / `else: from x import y`** — 42 blocks.
-  `data_collection_scripts/` has no `__init__.py` and nothing in the repo
+  `data_collection/` has no `__init__.py` and nothing in the repo
   imports it as a package, so `__package__` was always `''` and the relative
   branch was dead.  Entry points are `python teleop.py`; the absolute form is
   the only one that ever ran.
@@ -307,6 +307,6 @@ work (the `sys.path` setup in `study_ik.py`, `place_grid.py`,
 `rollout_policy.py`), and genuinely optional dependencies (loguru).
 
 **The rule going forward:** absolute imports everywhere in these flat trees;
-`import _giava_paths` at the top of any tool outside `data_collection_scripts/`.
+`import _giava_paths` at the top of any tool outside `data_collection/`.
 Guard an import only when the module is genuinely optional — not to paper over
 a module that is doing two jobs.
