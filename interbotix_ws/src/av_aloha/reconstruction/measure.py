@@ -3,6 +3,8 @@
     status      what the rig is and where it is
     precision   how accurate it can be, before you rely on it
     pair        click a feature in two saved images and get its position
+    pose        click >= 3 points on an object in both views: position AND
+                orientation (live cameras, or a saved pair)
     known-size  depth from an object of known length, using NO extrinsics
 
 The interactive work normally happens in `world_view.py --measure`, which
@@ -212,6 +214,224 @@ def cmd_pair(args) -> None:
         print("\n  nothing measured")
 
 
+def _grab_pair(args, names: List[str]) -> Dict[str, np.ndarray]:
+    """Live preview of every camera in one window; SPACE freezes a set."""
+    import cv2
+    from common import DATA_ROOT, timestamp
+    from rs_camera import resolve as rs_resolve
+    from sync_capture import CameraWorker
+
+    workers = {}
+    for name, _ in rs_resolve(names):
+        w = CameraWorker(name, args.width, args.height, args.fps,
+                         global_time=True, keep_images=True)
+        w.start()
+        workers[name] = w
+    print("\n  live: SPACE freezes the views to click on, q quits")
+    frozen = None
+    try:
+        while frozen is None:
+            recs = {n: workers[n].snapshot() for n in names}
+            if any(r is None or r.image is None for r in recs.values()):
+                cv2.waitKey(10)
+                continue
+            imgs = {n: cv2.cvtColor(r.image, cv2.COLOR_RGB2BGR)
+                    for n, r in recs.items()}
+            cv2.imshow("pose -- SPACE freezes, q quits",
+                       np.hstack([imgs[n] for n in names]))
+            k = cv2.waitKey(1) & 0xFF
+            if k == ord("q"):
+                raise SystemExit("  quit before freezing")
+            if k == 32:
+                frozen = imgs
+    finally:
+        cv2.destroyAllWindows()
+        for w in workers.values():
+            w.stop()
+    out = Path(args.outdir) if args.outdir else (
+        Path(DATA_ROOT) / "measurements" / f"pose_{timestamp()}")
+    out.mkdir(parents=True, exist_ok=True)
+    for n, img in frozen.items():
+        cv2.imwrite(str(out / f"{n}.png"), img)
+    args.outdir = str(out)
+    print(f"  frozen views saved -> {out}  (re-measure later with "
+          f"--images {' '.join(str(out / f'{n}.png') for n in names)})")
+    return frozen
+
+
+def cmd_pose(args) -> None:
+    """Click the same N points on an object in both views -> its pose."""
+    import cv2
+    from common import DATA_ROOT, matrix_to_quat_wxyz, save_json, timestamp
+    from object_pose import object_pose
+
+    rig = _load(args)
+    names = list(args.cameras)
+    if len(names) != 2:
+        raise SystemExit("pose works on exactly two cameras")
+    model = None
+    if args.model:
+        from common import load_json
+        model = np.asarray(load_json(Path(args.model))["points"], dtype=float)
+        print(f"  model: {len(model)} points from {args.model} -- click them "
+              f"in THAT order")
+
+    if args.images:
+        imgs = {}
+        for name, path in zip(names, args.images):
+            img = cv2.imread(str(path))
+            if img is None:
+                raise SystemExit(f"could not read {path}")
+            imgs[name] = img
+    else:
+        imgs = _grab_pair(args, names)
+    for name, img in imgs.items():
+        if (img.shape[1], img.shape[0]) != (rig[name].width, rig[name].height):
+            raise SystemExit(
+                f"{name} image is {img.shape[1]}x{img.shape[0]} but its "
+                f"intrinsics are for {rig[name].width}x{rig[name].height}")
+
+    W = imgs[names[0]].shape[1]
+    points: List[Dict[str, np.ndarray]] = [{}]   # last entry is in progress
+    clicks: List[str] = []                       # camera of each click, for undo
+    result: Optional[Dict[str, Any]] = None
+
+    def on_mouse(event, x, y, flags, param):
+        nonlocal result
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        name = names[0] if x < W else names[1]
+        u = float(x if x < W else x - W)
+        if name not in points[-1]:
+            clicks.append(name)
+        points[-1][name] = np.array([u, float(y)])
+        result = None
+        if len(points[-1]) == 2:
+            print(f"    point {len(points) - 1}: "
+                  + "  ".join(f"{n} ({p[0]:.0f}, {p[1]:.0f})"
+                              for n, p in points[-1].items()))
+            points.append({})
+
+    win = "pose -- click points in BOTH views; ENTER solves, z undo, r reset, q quit"
+    cv2.namedWindow(win)
+    cv2.setMouseCallback(win, on_mouse)
+    print(f"""
+  Click a point on the object in one view, then the SAME point in the
+  other (a curve shows where it can be). Repeat for >= 3 points that are
+  not on one line -- {"in the model's order" if model is not None else
+  "point 0 is the origin, 0->1 is +x, and 0-1-2 sets the plane"}.
+  ENTER solves, z undoes a click, r resets, s saves, q quits.
+""")
+    colours = [(0, 255, 255), (255, 128, 0), (255, 0, 255), (0, 200, 0),
+               (0, 128, 255), (255, 255, 0)]
+    while True:
+        tiles = {n: imgs[n].copy() for n in names}
+        for i, pt in enumerate(points):
+            col = colours[i % len(colours)]
+            for n, uv in pt.items():
+                x, y = (int(round(v)) for v in uv)
+                cv2.drawMarker(tiles[n], (x, y), col, cv2.MARKER_CROSS, 16, 2)
+                cv2.putText(tiles[n], str(i), (x + 6, y - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
+        pend = points[-1]
+        if len(pend) == 1:
+            src = next(iter(pend))
+            dst = names[1] if src == names[0] else names[0]
+            try:
+                c = rig.epipolar_curve(src, pend[src], dst,
+                                       depth_range=tuple(args.depth_range))
+                px = np.asarray(c["pixels"])
+                pts = px[np.isfinite(px).all(axis=1)].astype(int)
+                for p, q in zip(pts[:-1], pts[1:]):
+                    cv2.line(tiles[dst], tuple(p), tuple(q), (60, 220, 255), 1)
+            except Exception:  # noqa: BLE001
+                pass
+        if result is not None:
+            T = result["T_ref_object"]
+            L = args.axis_length
+            axes = np.array([T[:3, 3]] + [T[:3, 3] + L * T[:3, k]
+                                          for k in range(3)])
+            for n in names:
+                uv = rig[n].project_ref(axes)
+                if not np.isfinite(uv).all():
+                    continue
+                o = tuple(int(v) for v in uv[0])
+                for k, col in enumerate([(0, 0, 255), (0, 255, 0),
+                                         (255, 0, 0)]):
+                    cv2.line(tiles[n], o, tuple(int(v) for v in uv[k + 1]),
+                             col, 2)
+        cv2.imshow(win, np.hstack([tiles[n] for n in names]))
+        k = cv2.waitKey(30) & 0xFF
+        done = [p for p in points if len(p) == 2]
+        if k == ord("q"):
+            break
+        if k == ord("r"):
+            points[:] = [{}]
+            clicks.clear()
+            result = None
+        elif k == ord("z") and clicks:
+            if not points[-1]:
+                points.pop()
+            points[-1].pop(clicks.pop(), None)
+            result = None
+        elif k in (13, 10) and result is None:
+            if model is not None and len(done) != len(model):
+                print(f"  model has {len(model)} points, {len(done)} clicked")
+                continue
+            try:
+                result = object_pose(rig, done, model=model,
+                                     sigma_px=args.sigma)
+            except ValueError as e:
+                print(f"  cannot solve: {e}")
+                continue
+            _print_pose(result, matrix_to_quat_wxyz)
+        elif k == ord("s") and result is not None:
+            out = Path(args.outdir) if args.outdir else (
+                Path(DATA_ROOT) / "measurements" / f"pose_{timestamp()}")
+            out.mkdir(parents=True, exist_ok=True)
+            doc = {
+                "ref_frame": result["ref_frame"],
+                "rig": rig.source,
+                "method": result["method"],
+                "T_ref_object_row_major": result["T_ref_object"].tolist(),
+                "quat_wxyz": matrix_to_quat_wxyz(result["R"]).tolist(),
+                "points_m": result["points_m"].tolist(),
+                "clicks": [{n: p.tolist() for n, p in c.items()}
+                           for c in done],
+                "ray_gap_mm": result["ray_gap_mm"],
+                "fit_rms_mm": result["fit_rms_mm"],
+                "images": args.images or [str(out / f"{n}.png")
+                                          for n in names],
+            }
+            path = save_json(doc, out / f"pose_{timestamp()}.json")
+            cv2.imwrite(str(out / f"pose_{timestamp()}_overlay.png"),
+                        np.hstack([tiles[n] for n in names]))
+            print(f"  saved -> {path}")
+    cv2.destroyAllWindows()
+
+
+def _print_pose(r: Dict[str, Any], to_quat) -> None:
+    p = r["position_m"] * 1e3
+    R = r["R"]
+    print(f"\n  object pose in '{r['ref_frame']}'   ({r['method']})")
+    print(f"    position  [{p[0]:8.1f} {p[1]:8.1f} {p[2]:8.1f}] mm")
+    c = r["centroid_m"] * 1e3
+    print(f"    centroid  [{c[0]:8.1f} {c[1]:8.1f} {c[2]:8.1f}] mm")
+    print(f"    quat wxyz {np.array2string(to_quat(R), precision=4)}")
+    for k, ax in enumerate("xyz"):
+        print(f"    object +{ax} = [{R[0, k]:+.3f} {R[1, k]:+.3f} "
+              f"{R[2, k]:+.3f}]")
+    gaps = ", ".join(f"{g:.1f}" for g in r["ray_gap_mm"])
+    print(f"    ray gaps per point: {gaps} mm   (how far the two rays "
+          f"miss each other;\n      a big one = that point was clicked on "
+          f"different features)")
+    if r["fit_rms_mm"] is not None:
+        res = ", ".join(f"{v:.1f}" for v in r["fit_residual_mm"])
+        print(f"    model fit {r['fit_rms_mm']:.1f} mm rms  (per point: "
+              f"{res})")
+    print("    axes drawn: x red, y green, z blue.  s saves.")
+
+
 def cmd_known_size(args) -> None:
     rig = _load(args)
     r = rig.depth_from_known_size(args.camera, args.a, args.b, args.size)
@@ -275,6 +495,22 @@ def main() -> None:
     pa.add_argument("--repeat", action="store_true",
                     help="keep measuring instead of exiting after one")
     pa.set_defaults(fn=cmd_pair)
+
+    po = common(sub.add_parser(
+        "pose", help="object position + orientation from >= 3 points"))
+    po.add_argument("--images", nargs="+", default=None,
+                    help="one image per --cameras entry; omit to grab live")
+    po.add_argument("--model", default=None,
+                    help='JSON {"points": [[x,y,z], ...]} -- the clicked '
+                         "points in the object's own frame, metres")
+    po.add_argument("--depth-range", nargs=2, type=float, default=[0.15, 2.0])
+    po.add_argument("--axis-length", type=float, default=0.05,
+                    help="drawn axis length, metres")
+    po.add_argument("--outdir", default=None)
+    po.add_argument("--width", type=int, default=640)
+    po.add_argument("--height", type=int, default=480)
+    po.add_argument("--fps", type=int, default=30)
+    po.set_defaults(fn=cmd_pose)
 
     ks = common(sub.add_parser(
         "known-size", help="depth from an object of known length"))

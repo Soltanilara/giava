@@ -215,12 +215,28 @@ def cmd_collect(args) -> None:
             "scene_extrinsics.py collect ...\n"
             "  Headless:      add --auto (saves whenever both cameras see "
             "the board and it has moved enough)")
-    spec = B.spec_from_args(args)
-    print(f"\n  board: {spec.describe()}")
-    if not spec.measured:
-        print("\n  *** the board is not marked as measured -- every distance "
-              "this rig\n      ever reports will be scaled by the error "
-              "(charuco_board.json) ***")
+    grid = _grid_from_args(args)
+    if grid is not None:
+        spec = grid
+        print(f"\n  board: {grid.describe()}")
+        print("\n  The square length sets the scale of everything this rig "
+              "will ever\n  measure. Measure it across as many squares as "
+              "the ruler spans, and divide.")
+
+        def detect_fn(image):
+            return B.detect_chessboard(image, grid)
+    else:
+        spec = B.spec_from_args(args)
+        print(f"\n  board: {spec.describe()}")
+        if not spec.measured:
+            print("\n  *** the board is not marked as measured -- every "
+                  "distance this rig\n      ever reports will be scaled by "
+                  "the error (charuco_board.json) ***")
+        detector, cvboard = B.make_detector(spec)
+
+        def detect_fn(image):
+            return B.detect(image, detector, cvboard,
+                            min_corners=args.min_corners)
 
     cams = list(args.cameras)
     pair = rs_resolve(cams)
@@ -228,7 +244,6 @@ def cmd_collect(args) -> None:
     for c in intr.values():
         print("\n" + c.describe())
 
-    detector, cvboard = B.make_detector(spec)
     outdir = Path(args.outdir) if args.outdir else (
         DIR_SCENE / f"{'_'.join(cams)}_{timestamp()}")
     (outdir / "images").mkdir(parents=True, exist_ok=True)
@@ -255,7 +270,7 @@ def cmd_collect(args) -> None:
       A view that is good for one and edge-on for the other is worth
       little, and this refuses those below --min-tilt.
 
-  {'SPACE saves a view, q finishes.' if show else
+  {'SPACE saves a view, u undoes the last one, q finishes.' if show else
      f'AUTO mode: saving every {args.interval:.1f} s once the board has moved.'}
   Target {args.target} views.
 
@@ -280,8 +295,7 @@ def cmd_collect(args) -> None:
                     ok_all = False
                     break
                 frames[name] = rec
-                det = B.detect(rec.image, detector, cvboard,
-                               min_corners=args.min_corners)
+                det = detect_fn(rec.image)
                 dets[name] = det
                 vis = B.annotate(rec.image.copy(), det) if det.ok \
                     else rec.image.copy()
@@ -310,6 +324,16 @@ def cmd_collect(args) -> None:
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     break
+                if key == ord("u") and views:
+                    gone = views.pop()
+                    saved -= 1
+                    for c in gone["cameras"].values():
+                        (outdir / c["image"]).unlink(missing_ok=True)
+                    last_pose = (np.asarray(views[-1]["cameras"][cams[0]]
+                                            ["T_cam_board_row_major"])
+                                 if views else None)
+                    print(f"  undid view {gone['index']} ({saved} left)")
+                    continue
                 want = (key == 32)
             else:
                 now = time.time()
@@ -347,7 +371,11 @@ def cmd_collect(args) -> None:
             if last_pose is not None:
                 T_now = board_pose(dets[cams[0]], intr[cams[0]])
                 if T_now is not None:
-                    mm, deg = _pose_change(T_now, last_pose)
+                    ## A chessboard's numbering can flip between frames, which
+                    ## would read as a 180 deg turn of a board that never moved.
+                    mm, deg = (_board_change(T_now, last_pose, grid)
+                               if grid is not None
+                               else _pose_change(T_now, last_pose))
                     if mm < args.min_move and deg < args.min_rot:
                         ## Printed in BOTH modes: gating this on `show` was
                         ## backwards, since headless is when it matters.
@@ -401,6 +429,30 @@ def cmd_collect(args) -> None:
     print(f"\n  {len(views)} views -> {path}")
     print(f"\n  Next:\n      python calibration/scene_extrinsics.py solve "
           f"--dir {outdir}")
+
+
+def _grid_from_args(args) -> Optional["B.GridSpec"]:
+    if not args.grid:
+        return None
+    if args.grid_square is None:
+        raise SystemExit("--grid needs --grid-square (the MEASURED side of "
+                         "one square, in metres)")
+    grid = B.GridSpec(int(args.grid[0]), int(args.grid[1]),
+                      float(args.grid_square))
+    grid.validate()
+    return grid
+
+
+def _board_change(a: np.ndarray, b: np.ndarray, grid: "B.GridSpec"
+                  ) -> Tuple[float, float]:
+    """(mm the board centre moved, deg its plane tilted) -- label-blind.
+
+    The centre maps to itself under every relabelling of the grid, and the
+    plane normal only changes sign, so this cannot be fooled by a flip."""
+    c = np.r_[grid.obj_points().mean(axis=0), 1.0]
+    mm = float(np.linalg.norm((a @ c)[:3] - (b @ c)[:3]) * 1e3)
+    cosang = abs(float(np.dot(a[:3, 2], b[:3, 2])))
+    return mm, float(np.degrees(np.arccos(np.clip(cosang, 0.0, 1.0))))
 
 
 def _tilt_deg(T_cam_board: np.ndarray) -> float:
@@ -459,8 +511,25 @@ def _make_view(cams, frames, dets, intr, index, outdir, args
 def cmd_solve(args) -> None:
     from camera import load_intrinsics
 
-    session = Path(args.dir)
-    doc = load_json(session / "views.json" if session.is_dir() else session)
+    ## Several sessions can be pooled -- e.g. a second, short one adding
+    ## views where the first left gaps -- as long as cameras and board match.
+    doc = None
+    for d in args.dir:
+        session = Path(d)
+        part = load_json(session / "views.json" if session.is_dir()
+                         else session)
+        if doc is None:
+            doc = dict(part, views=list(part["views"]))
+            continue
+        if part["cameras"] != doc["cameras"] or \
+                part.get("board") != doc.get("board"):
+            raise SystemExit(f"{d}: different cameras or board from "
+                             f"{args.dir[0]} -- cannot pool them")
+        doc["views"] += part["views"]
+    if len(args.dir) > 1:
+        for i, v in enumerate(doc["views"]):
+            v["index"] = i
+        print(f"\n  pooled {len(args.dir)} sessions")
     cams = list(doc["cameras"])
     if args.reference and args.reference not in cams:
         raise SystemExit(f"--reference must be one of {cams}")
@@ -473,6 +542,9 @@ def cmd_solve(args) -> None:
 
     result: Dict[str, Any] = {}
     for other in others:
+        if (doc.get("board") or {}).get("type") == "chessboard":
+            views = _align_grid_labels(views, ref, other, intr, doc["board"],
+                                       args.label_tol_mm, args.label_tol_deg)
         per_view, kept = [], []
         for v in views:
             a = np.asarray(v["cameras"][ref]["T_cam_board_row_major"])
@@ -551,11 +623,11 @@ def cmd_solve(args) -> None:
                      "provenance": "reference camera (identity by definition)"}}
     for other, r in result.items():
         entries[other] = {"T_ref_cam_row_major": r["T_ref_cam_row_major"],
-                          "provenance": f"scene_extrinsics:{Path(args.dir).name}"}
+                          "provenance": f"scene_extrinsics:{'+'.join(Path(d).name for d in args.dir)}"}
 
     doc_out = {
         "metadata": provenance("scene_extrinsics_solve",
-                               session=str(args.dir), cameras=cams,
+                               session=[str(d) for d in args.dir], cameras=cams,
                                reference_camera=ref, n_views=len(views)),
         "convention": (
             "T_ref_cam maps points from the CAMERA optical frame into the "
@@ -582,12 +654,92 @@ def cmd_solve(args) -> None:
     print(f"""
   You can measure with this right now, in '{ref}' coordinates:
 
-      python reconstruction/measure.py --frame stereo --list
+      python reconstruction/measure.py list --frame stereo
 
   To get robot-world coordinates as well:
 
       python calibration/scene_extrinsics.py anchor --help
 """)
+
+
+def _align_grid_labels(views, ref, other, intr, board: Dict[str, Any],
+                       tol_mm: float, tol_deg: float) -> List[Dict[str, Any]]:
+    """Make `other`'s chessboard corner numbers agree with `ref`'s.
+
+    On a plain chessboard the detector numbers the corners only up to a
+    symmetry of the grid, independently in each image.  If the two cameras
+    disagree, the per-view camera-to-camera transform is off by the whole
+    board turned 180 deg -- and silently so, since each camera's own fit is
+    perfect.
+
+    The two cameras are rigidly mounted, so the right labelling of each
+    view is the one whose camera-to-camera transform agrees with the other
+    views.  Every relabelling of every view is a candidate; the candidate
+    that most views can match is the consensus; each view keeps the
+    labelling closest to it, and a view that cannot get within tolerance
+    is dropped and reported.  Wrong labellings land a board-width and tens
+    of degrees away, so this is not a fine judgement."""
+    from types import SimpleNamespace
+
+    grid = B.GridSpec(int(board["cols"]), int(board["rows"]),
+                      float(board["square_length_m"]))
+    obj = grid.obj_points()
+    perms = B.grid_symmetries(grid.cols, grid.rows)
+
+    cands = []          # per view: [(T_ref_other, perm, T_other_board)]
+    for v in views:
+        a = np.asarray(v["cameras"][ref]["T_cam_board_row_major"])
+        cb = v["cameras"][other]
+        img = np.asarray(cb["img_points"], dtype=np.float32)
+        ids = np.asarray(cb["corner_ids"], dtype=int)
+        row = []
+        for p in perms:
+            det = SimpleNamespace(obj_points=obj[p[ids]], img_points=img)
+            T_b = board_pose(det, intr[other])
+            if T_b is not None:
+                row.append((a @ invert_T(T_b), p, T_b))
+        cands.append(row)
+
+    def close(T1, T2) -> bool:
+        mm, deg = _pose_change(T1, T2)
+        return mm <= tol_mm and deg <= tol_deg
+
+    best, best_n = None, -1
+    for row in cands:
+        for T, _, _ in row:
+            n = sum(any(close(T, U) for U, _, _ in r) for r in cands)
+            if n > best_n:
+                best, best_n = T, n
+
+    out, dropped = [], []
+    for v, row in zip(views, cands):
+        if not row:
+            dropped.append((v["index"], "PnP failed"))
+            continue
+        T, p, T_b = min(row, key=lambda c: sum(_pose_change(c[0], best)
+                                               * np.array([1.0, 10.0])))
+        if not close(T, best):
+            mm, deg = _pose_change(T, best)
+            dropped.append((v["index"], f"{mm:.0f} mm / {deg:.1f} deg off "
+                                        f"the consensus"))
+            continue
+        v = dict(v, cameras=dict(v["cameras"]))
+        cb = dict(v["cameras"][other])
+        ids = p[np.asarray(cb["corner_ids"], dtype=int)]
+        cb["corner_ids"] = ids.tolist()
+        cb["obj_points"] = obj[ids].tolist()
+        cb["T_cam_board_row_major"] = T_b.tolist()
+        v["cameras"][other] = cb
+        out.append(v)
+
+    print(f"\n  chessboard labels: {len(out)}/{len(views)} views agree on "
+          f"{ref}<->{other} (within {tol_mm:.0f} mm / {tol_deg:.0f} deg)")
+    for idx, why in dropped:
+        print(f"    dropped view {idx}: {why}")
+    if len(out) < len(views) / 2:
+        print("    ! fewer than half the views agree -- a camera may have "
+              "moved during collection, or --grid-square was wrong")
+    return out
 
 
 def _stereo_refine(views, ref, other, intr, T_init) -> Tuple[np.ndarray, Dict]:
@@ -1087,6 +1239,13 @@ def main() -> None:
                         "since the last one (or turned --min-rot)")
     c.add_argument("--min-rot", type=float, default=12.0,
                    help="degrees, see --min-move")
+    c.add_argument("--grid", nargs=2, type=int, default=None,
+                   metavar=("COLS", "ROWS"),
+                   help="use a plain chessboard instead of the ChArUco "
+                        "board: INTERIOR corners across and down (squares "
+                        "minus one each way)")
+    c.add_argument("--grid-square", type=float, default=None,
+                   help="with --grid: measured side of one square, METRES")
     c.add_argument("--outdir", default=None)
     c.add_argument("--width", type=int, default=640)
     c.add_argument("--height", type=int, default=480)
@@ -1098,11 +1257,16 @@ def main() -> None:
     c.set_defaults(fn=cmd_collect)
 
     s = sub.add_parser("solve", help="camera-to-camera geometry")
-    s.add_argument("--dir", required=True, help="a collect session directory")
+    s.add_argument("--dir", required=True, nargs="+",
+                   help="one or more collect session directories (pooled)")
     s.add_argument("--reference", default=None,
                    help="which camera's frame the rig is expressed in "
                         "(default: the first)")
     s.add_argument("--min-views", type=int, default=6)
+    s.add_argument("--label-tol-mm", type=float, default=40.0,
+                   help="chessboard only: how far a view's camera-to-camera "
+                        "estimate may sit from the consensus")
+    s.add_argument("--label-tol-deg", type=float, default=6.0)
     s.add_argument("--no-refine", action="store_true",
                    help="skip the joint bundle refinement")
     s.add_argument("--prefer-intrinsics", default="charuco",

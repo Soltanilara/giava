@@ -220,6 +220,8 @@ class Detection:
     img_points: Optional[np.ndarray] = None        # (N, 2) float32, pixels
     n_markers: int = 0
     reason: str = ""
+    kind: str = "charuco"     # or "chessboard" -- see detect_chessboard()
+    pattern_size: Optional[Tuple[int, int]] = None   # chessboard (cols, rows)
 
 
 def make_detector(spec: BoardSpec):
@@ -276,6 +278,122 @@ def detect(image: np.ndarray, detector, board,
         n_markers=n_markers)
 
 
+## ------------------------------------------------------------------ ##
+## Plain chessboard  (no markers)
+## ------------------------------------------------------------------ ##
+
+@dataclass
+class GridSpec:
+    """A plain printed chessboard -- no ArUco markers.
+
+    cols / rows       INTERIOR corners across and down, i.e. one fewer than
+                      the number of squares in each direction.  A board of
+                      10 x 7 squares is cols=9, rows=6.
+    square_length_m   physical side of one square, MEASURED on the print.
+
+    Unlike ChArUco, every interior corner looks the same, so the detector
+    can only number them up to a symmetry of the grid: the same physical
+    corner may be #0 in one camera and #N-1 in the other.  Every corner
+    must also be visible -- a partly occluded board is not detected.
+    `grid_symmetries` and scene_extrinsics' label alignment deal with the
+    first; the second is why the preview matters."""
+    cols: int
+    rows: int
+    square_length_m: float
+
+    @property
+    def n_corners(self) -> int:
+        return self.cols * self.rows
+
+    @property
+    def pattern_size(self) -> Tuple[int, int]:
+        return (self.cols, self.rows)
+
+    def validate(self) -> None:
+        if self.cols < 3 or self.rows < 3:
+            raise ValueError("a chessboard needs >= 3 interior corners each "
+                             "way (cols/rows count CORNERS, not squares)")
+        if self.square_length_m <= 0:
+            raise ValueError("square_length_m must be positive")
+
+    def obj_points(self) -> np.ndarray:
+        """(N, 3) board-frame corners, row-major -- index = r * cols + c."""
+        r, c = np.mgrid[0:self.rows, 0:self.cols]
+        xy = np.stack([c.ravel(), r.ravel()], axis=1) * self.square_length_m
+        return np.hstack([xy, np.zeros((len(xy), 1))]).astype(np.float32)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"type": "chessboard", "cols": self.cols, "rows": self.rows,
+                "square_length_m": self.square_length_m,
+                "interior_corners": self.n_corners,
+                "squares": [self.cols + 1, self.rows + 1]}
+
+    def describe(self) -> str:
+        return (f"chessboard, {self.cols}x{self.rows} interior corners "
+                f"({self.cols + 1}x{self.rows + 1} squares), square "
+                f"{self.square_length_m * 1e3:.3f} mm")
+
+
+def grid_symmetries(cols: int, rows: int) -> list:
+    """Every relabelling of a cols x rows corner grid that maps it onto itself.
+
+    Returned as index arrays `p` with `p[k]` = the new label of corner k.
+    A rectangle has 4 (identity, 180 deg turn, and the two flips -- a flip
+    is the board seen from the back, which the detector cannot tell apart
+    on a plain print); a square grid also has the 90 deg turns, 8 in all."""
+    r, c = np.divmod(np.arange(cols * rows), cols)
+    maps = [(r, c), (rows - 1 - r, cols - 1 - c),
+            (rows - 1 - r, c), (r, cols - 1 - c)]
+    if cols == rows:
+        maps += [(c, r), (cols - 1 - c, rows - 1 - r),
+                 (c, rows - 1 - r), (cols - 1 - c, r)]
+    return [rr * cols + cc for rr, cc in maps]
+
+
+def detect_chessboard(image: np.ndarray, grid: GridSpec,
+                      stretch: Tuple[float, ...] = (3.0,)) -> Detection:
+    """Find a plain chessboard; same Detection shape as `detect`.
+
+    `charuco_ids` is the row-major corner index, so everything downstream
+    that matches corners by id works unchanged -- once the two cameras'
+    numberings have been made to agree (see GridSpec).
+
+    `stretch`: vertical magnifications to retry with when the plain attempt
+    fails.  A board lying flat, seen by a camera looking ACROSS the table
+    (low_scene), has squares only a few pixels tall; the detectors reject
+    them as not square-ish.  Stretching the image vertically undoes most of
+    that foreshortening, and the corners are scaled back afterwards.  Only
+    the failure path pays for it."""
+    require_cv2()
+    gray = _to_gray(image)
+    ## The sector-based detector is far more tolerant of glare and blur than
+    ## the classic one -- which matters for a laminated print -- and returns
+    ## sub-pixel corners directly.
+    flags = cv2.CALIB_CB_NORMALIZE_IMAGE | cv2.CALIB_CB_ACCURACY
+    found, corners = cv2.findChessboardCornersSB(gray, grid.pattern_size,
+                                                 flags=flags)
+    for fy in (() if found else stretch):
+        tall = cv2.resize(gray, None, fx=1.0, fy=fy,
+                          interpolation=cv2.INTER_CUBIC)
+        found, corners = cv2.findChessboardCornersSB(tall, grid.pattern_size,
+                                                     flags=flags)
+        if found:
+            ## Pixel CENTRES scale, not pixel edges: y_orig + 0.5 = (y + 0.5)/fy
+            corners = np.asarray(corners, dtype=np.float32).reshape(-1, 2)
+            corners[:, 1] = (corners[:, 1] + 0.5) / fy - 0.5
+            break
+    if not found or corners is None:
+        return Detection(False, 0, kind="chessboard",
+                         pattern_size=grid.pattern_size,
+                         reason="no complete grid (every corner must show)")
+    img = np.asarray(corners, dtype=np.float32).reshape(-1, 2)
+    return Detection(
+        True, len(img), charuco_corners=img,
+        charuco_ids=np.arange(len(img)),
+        obj_points=grid.obj_points(), img_points=img,
+        kind="chessboard", pattern_size=grid.pattern_size)
+
+
 def _to_gray(image: np.ndarray) -> np.ndarray:
     if image.ndim == 2:
         return image
@@ -290,12 +408,22 @@ def annotate(image: np.ndarray, det: Detection) -> np.ndarray:
     out = image.copy()
     if out.ndim == 2:
         out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
-    if det.ok and det.charuco_corners is not None:
+    if det.ok and det.kind == "chessboard":
+        ## The rainbow runs from corner 0 to corner N-1, so a label flip
+        ## between the two cameras is visible as reversed colours.
+        cv2.drawChessboardCorners(
+            out, det.pattern_size,
+            det.img_points.reshape(-1, 1, 2).astype(np.float32), True)
+    elif det.ok and det.charuco_corners is not None:
         cv2.aruco.drawDetectedCornersCharuco(
             out, det.charuco_corners.reshape(-1, 1, 2),
             det.charuco_ids.reshape(-1, 1).astype(np.int32), (0, 255, 0))
-    txt = (f"{det.n_corners} corners / {det.n_markers} markers"
-           if det.ok else f"REJECTED: {det.reason}")
+    if not det.ok:
+        txt = f"REJECTED: {det.reason}"
+    elif det.kind == "chessboard":
+        txt = f"{det.n_corners} corners"
+    else:
+        txt = f"{det.n_corners} corners / {det.n_markers} markers"
     cv2.putText(out, txt, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (0, 255, 0) if det.ok else (0, 0, 255), 2)
     return out
